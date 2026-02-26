@@ -1,0 +1,22 @@
+version: "3.8"
+
+services:
+  neo4j:
+    image: neo4j:latest
+    container_name: neo4j
+    ports:
+      - "7474:7474" # HTTP Web Interface
+      - "7687:7687" # Bolt Protocol
+    # 패스워드는 특수문자 포함 8자리로 생성 후 .env 파일에 저장
+    # .env 파일이 없으면 에러 발생
+    env_file: .env
+    environment:
+      - NEO4J_AUTH=neo4j/${NEO4J_PASSWORD}
+    # 데이터 영속성을 위한 볼륨 설정 (옵션: 필요 시 주석 해제)
+    # volumes:
+    #   - neo4j_data:/data
+    #   - neo4j_logs:/logs
+    restart: unless-stopped
+# volumes:
+#   neo4j_data:
+#   neo4j_logs:

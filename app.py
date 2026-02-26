@@ -10,8 +10,8 @@ import neo4j
 from dotenv import load_dotenv
 from neo4j_graphrag.llm import OpenAILLM
 from neo4j_graphrag.retrievers import VectorRetriever, VectorCypherRetriever, Text2CypherRetriever, ToolsRetriever
-from neo4j_graphrag.embeddings.openai import OpenAIEmbeddings
 from neo4j_graphrag.generation import RagTemplate, GraphRAG
+from gemini_embedder import GeminiEmbedder
 
 load_dotenv()
 
@@ -47,12 +47,26 @@ URI = os.getenv("NEO4J_URI", "neo4j://localhost:7687")
 AUTH = ("neo4j", os.getenv("NEO4J_PASSWORD", "password"))
 driver = neo4j.GraphDatabase.driver(URI, auth=AUTH)
 
-# LLM 및 Embedder 설정
+# Google AI Studio OpenAI 호환 엔드포인트 설정
+# Gemini API는 OpenAI SDK와 호환되는 엔드포인트를 제공함
+# 참고: https://ai.google.dev/gemini-api/docs/openai
+GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+
+# LLM 및 Embedder 설정 (Gemini 모델 사용)
 llm = OpenAILLM(
-    model_name="gpt-4o",
-    model_params={"temperature": 0}
+    model_name="gemini-3-flash-preview",
+    model_params={"temperature": 0},
+    # OpenAI 클라이언트 파라미터: Gemini 호환 엔드포인트로 라우팅
+    base_url=GEMINI_BASE_URL,
+    api_key=GOOGLE_API_KEY,
 )
-embedder = OpenAIEmbeddings(model="text-embedding-3-small")
+# 임베딩: google-generativeai 네이티브 SDK 사용
+# OpenAI 호환 엔드포인트는 text-embedding-004를 미지원하므로 네이티브 SDK로 처리
+embedder = GeminiEmbedder(
+    model="gemini-embedding-001",
+    api_key=GOOGLE_API_KEY,
+)
 
 # 전역 변수로 retriever 저장
 INDEX_NAME = "content_vector_index"

@@ -24,37 +24,63 @@
 
 ## 설치 및 실행
 
+### 기본 사항
+1. Docker Desktop이 실행 중이어야 함
+2. Neo4j Desktop이 실행 중이어야 함
+
+```
+docker run -d `
+  --name neo4j `
+  -p 7474:7474 -p 7687:7687 `
+  -e NEO4J_AUTH=neo4j/password `
+  neo4j:latest
+
+```
+
+
 ### 0. Neo4j Database
    - Neo4j 실행 중이어야 함 (기본: `neo4j://localhost:7687`)
-   - 뉴스 기사 데이터가 이미 그래프로 구축되어 있어야 함
-   - 필요한 벡터 인덱스: `content_vector_index`
+   - `init_db.py` 스크립트를 통해 샘플 데이터 구축 및 `content_vector_index` 생성 필요
+
+
+# init_db.py 실행
+
+```
+.venv\Scripts\python init_db.py
+```
 
 ### 1. 환경 설정
 
 ```bash
 uv venv
 uv pip install -r requirements.txt
+# Gemini 임베딩을 위한 최신 구글 SDK 설치
+uv pip install google-genai
 
 cp .env.example .env
+# .env 파일에 GOOGLE_API_KEY 추가 등 설정
 ```
 
-### 2. 서버 실행
+### 2. 샘플 데이터 및 벡터 인덱스 초기화
+
+API 키 설정과 DB 구동이 확인되었으면, 데모로 사용할 샘플 뉴스와 그래프를 삽입합니다.
 
 ```bash
-python app.py
+.venv\Scripts\python init_db.py
 ```
 
-또는
+### 3. 서버 실행
 
 ```bash
-uvicorn app:app --host 0.0.0.0 --port 8000 --reload
+.venv\Scripts\uvicorn app:app --host 0.0.0.0 --port 8800 --reload
 ```
 
-### 3. 브라우저에서 접속
+### 4. 브라우저에서 접속
 
 ```
-http://localhost:8000
+http://localhost:8800
 ```
+(또는 `ipconfig`로 확인한 로컬망 IP 주소 예: `http://192.168.38.92:8800` 로도 외부 네트워크 접근이 가능합니다.)
 
 ## 사용 방법
 
