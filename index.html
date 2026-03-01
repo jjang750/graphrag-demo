@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>GraphRAG 실시간 시각화 데모</title>
+    <title>XPERP 매뉴얼 챗봇</title>
     <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <style>
@@ -221,6 +221,78 @@
             color: #92400E;
         }
 
+        /* 디버그 패널 */
+        .debug-panel {
+            margin-top: 10px;
+            border: 1px solid #E0E0E0;
+            border-radius: 6px;
+            font-size: 12px;
+            overflow: hidden;
+        }
+        .debug-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 12px;
+            background: #F5F5F5;
+            cursor: pointer;
+            user-select: none;
+            font-weight: 600;
+            color: #555;
+        }
+        .debug-header:hover { background: #EEEEEE; }
+        .debug-header .debug-toggle-icon { margin-left: auto; font-size: 10px; color: #999; }
+        .debug-body {
+            display: none;
+            padding: 10px 12px;
+            background: #FAFAFA;
+            border-top: 1px solid #E0E0E0;
+        }
+        .debug-body.open { display: block; }
+        .debug-section { margin-bottom: 10px; }
+        .debug-section:last-child { margin-bottom: 0; }
+        .debug-label {
+            font-weight: 600;
+            color: #7B1FA2;
+            margin-bottom: 4px;
+        }
+        .debug-chip {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 10px;
+            background: #EDE7F6;
+            color: #4A148C;
+            font-weight: 600;
+            font-size: 11px;
+        }
+        .debug-nodes {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 4px;
+            margin-top: 4px;
+        }
+        .debug-node-chip {
+            padding: 2px 7px;
+            border-radius: 10px;
+            font-size: 11px;
+            background: #E3F2FD;
+            color: #0D47A1;
+        }
+        .debug-context {
+            background: #fff;
+            border: 1px solid #E0E0E0;
+            border-radius: 4px;
+            padding: 8px;
+            max-height: 200px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-break: break-all;
+            color: #333;
+            font-family: monospace;
+            font-size: 11px;
+            line-height: 1.5;
+        }
+
         .graph-container {
             flex: 1;
             border: 2px solid #e0e0e0;
@@ -429,14 +501,38 @@
         .example-query:hover {
             background: #FEF3C7;
         }
+
+        .task-toggle {
+            position: absolute;
+            top: 12px;
+            right: 12px;
+            width: auto;
+            padding: 6px 14px;
+            font-size: 12px;
+            font-weight: 600;
+            background: #7B1FA2;
+            color: white;
+            border-radius: 20px;
+            cursor: pointer;
+            z-index: 200;
+            transition: background 0.2s;
+        }
+        .task-toggle:hover {
+            background: #6A1B9A;
+            transform: none;
+            box-shadow: none;
+        }
+        .task-toggle.off {
+            background: #9E9E9E;
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <!-- 좌측 패널: 채팅 UI -->
         <div class="left-panel">
-            <h1>🔍 GraphRAG Demo</h1>
-            <p class="subtitle">네이버 뉴스 기사를 기반으로 답변하는 AI 챗봇입니다</p>
+            <h1>📖 XPERP 매뉴얼 챗봇</h1>
+            <p class="subtitle">XPERP 시스템 메뉴얼 기반 AI 안내 챗봇입니다</p>
 
             <div class="input-group">
                 <textarea
@@ -450,14 +546,17 @@
 
             <div class="example-queries" id="exampleQueries">
                 <h3>💡 예시 질문</h3>
-                <div class="example-query" onclick="setQuestion('정치 카테고리의 최신 뉴스 알려줘')">
-                    • 정치 카테고리의 최신 뉴스 알려줘
+                <div class="example-query" onclick="setQuestion('전기 검침 업무는 어떻게 처리하나요?')">
+                    • 전기 검침 업무는 어떻게 처리하나요?
                 </div>
-                <div class="example-query" onclick="setQuestion('삼성전자 관련 기사 찾아줘')">
-                    • 삼성전자 관련 기사 찾아줘
+                <div class="example-query" onclick="setQuestion('수납 업무에서 지로 발행은 어떻게 하나요?')">
+                    • 수납 업무에서 지로 발행은 어떻게 하나요?
                 </div>
-                <div class="example-query" onclick="setQuestion('경제 분야 최신 뉴스는?')">
-                    • 경제 분야 최신 뉴스는?
+                <div class="example-query" onclick="setQuestion('입주 업무 처리 절차를 알려주세요')">
+                    • 입주 업무 처리 절차를 알려주세요
+                </div>
+                <div class="example-query" onclick="setQuestion('검침 오류가 발생했을 때 어떻게 해결하나요?')">
+                    • 검침 오류가 발생했을 때 어떻게 해결하나요?
                 </div>
             </div>
 
@@ -468,6 +567,28 @@
                         <div class="answer-content" id="answer"></div>
                     </div>
                     <div class="info-box" id="infoBox"></div>
+
+                    <!-- 디버그 패널 -->
+                    <div class="debug-panel" id="debugPanel">
+                        <div class="debug-header" onclick="toggleDebugPanel()">
+                            🔍 검색 디버그 정보
+                            <span class="debug-toggle-icon" id="debugToggleIcon">▶ 펼치기</span>
+                        </div>
+                        <div class="debug-body" id="debugBody">
+                            <div class="debug-section">
+                                <div class="debug-label">🔧 사용된 Retriever</div>
+                                <span class="debug-chip" id="debugRetriever">-</span>
+                            </div>
+                            <div class="debug-section">
+                                <div class="debug-label">📍 하이라이트 노드</div>
+                                <div class="debug-nodes" id="debugNodes"></div>
+                            </div>
+                            <div class="debug-section">
+                                <div class="debug-label">📋 검색된 컨텍스트 (원문)</div>
+                                <div class="debug-context" id="debugContext"></div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -476,6 +597,7 @@
         <div class="right-panel">
             <div class="graph-container">
                 <div id="mynetwork"></div>
+                <button class="task-toggle" id="taskToggle" onclick="toggleTaskNodes()">💡 Task 숨기기</button>
                 <div class="loading" id="loading">
                     <div class="spinner"></div>
                     <div style="text-align: center; color: #D97706; font-weight: 600;">
@@ -488,22 +610,48 @@
                     </span>
                     <div class="legend-details">
                         <div class="legend-section">
-                            <span style="font-weight: 600; color: #555;">노드:</span>
+                            <span style="font-weight: 600; color: #555;">답변 관련 노드:</span>
                             <div class="legend-item">
-                                <div class="legend-color" style="background: #97C2FC;"></div>
-                                <span>Article</span>
+                                <div class="legend-color" style="background: #FFB74D; border: 2px solid #F57C00;"></div>
+                                <span>Menu (대분류)</span>
                             </div>
                             <div class="legend-item">
-                                <div class="legend-color" style="background: #FFAB91;"></div>
-                                <span>Category</span>
+                                <div class="legend-color" style="background: #64B5F6; border: 2px solid #1976D2;"></div>
+                                <span>SubMenu (중분류)</span>
                             </div>
                             <div class="legend-item">
-                                <div class="legend-color" style="background: #A5D6A7;"></div>
-                                <span>Content</span>
+                                <div class="legend-color" style="background: #81C784; border: 2px solid #388E3C;"></div>
+                                <span>MenuItem (소분류)</span>
+                            </div>
+                        </div>
+                        <div class="legend-divider"></div>
+                        <div class="legend-section">
+                            <span style="font-weight: 600; color: #555;">Task (◇):</span>
+                            <div class="legend-item">
+                                <div class="legend-color" style="background: #80DEEA; border: 1px solid #757575;"></div>
+                                <span>전자투표</span>
                             </div>
                             <div class="legend-item">
-                                <div class="legend-color" style="background: #CE93D8;"></div>
-                                <span>Media</span>
+                                <div class="legend-color" style="background: #FFAB91; border: 1px solid #757575;"></div>
+                                <span>사용자관리</span>
+                            </div>
+                            <div class="legend-item">
+                                <div class="legend-color" style="background: #CE93D8; border: 1px solid #757575;"></div>
+                                <span>시스템</span>
+                            </div>
+                            <div class="legend-item">
+                                <div class="legend-color" style="background: #FFF176; border: 1px solid #757575;"></div>
+                                <span>부과</span>
+                            </div>
+                            <div class="legend-item" style="margin-top:2px;">
+                                <span style="font-size:10px; color:#888;">외 7개 도메인</span>
+                            </div>
+                        </div>
+                        <div class="legend-divider"></div>
+                        <div class="legend-section">
+                            <div class="legend-item">
+                                <div class="legend-color" style="background: #E8E8E8; border: 1px solid #BDBDBD;"></div>
+                                <span style="color: #999;">미관련 노드</span>
                             </div>
                         </div>
                     </div>
@@ -523,6 +671,7 @@
         let edges;
         let allNodesData = [];
         let allEdgesData = [];
+        let taskVisible = true;
 
         // 페이지 로드 시 그래프 초기화
         window.onload = async function() {
@@ -538,29 +687,59 @@
                 allEdgesData = data.edges;
 
                 // vis.js 데이터셋 생성
-                const nodesArray = allNodesData.map(node => ({
-                    id: node.id,
-                    label: node.title.substring(0, 25) + (node.title.length > 25 ? '...' : ''),
-                    title: `${node.label}: ${node.title}`,
-                    color: {
-                        background: '#E0E0E0',
-                        border: '#BDBDBD'
-                    },
-                    font: { size: 12, color: '#757575' },
-                    shape: 'dot',
-                    size: 15
-                }));
+                const nodesArray = allNodesData.map(node => {
+                    if (node.label === 'Task') {
+                        const domain = node.properties?.domain || '기타';
+                        const freq = node.properties?.frequency || 5;
+                        const bg = getTaskColor(domain);
+                        return {
+                            id: node.id,
+                            label: node.title.substring(0, 12) + (node.title.length > 12 ? '..' : ''),
+                            title: `[${domain}] ${node.title} (${freq}회)`,
+                            color: { background: bg, border: '#757575',
+                                     highlight: { background: bg, border: '#F57F17' } },
+                            font: { size: 9, color: '#333' },
+                            shape: 'diamond',
+                            size: Math.min(22, Math.max(8, Math.sqrt(freq) * 2.8))
+                        };
+                    }
+                    return {
+                        id: node.id,
+                        label: node.title.substring(0, 20) + (node.title.length > 20 ? '...' : ''),
+                        title: `[${node.label}] ${node.title}`,
+                        color: { background: '#E8E8E8', border: '#BDBDBD',
+                                 highlight: { background: '#FFF9C4', border: '#F57F17' } },
+                        font: { size: 11, color: '#888' },
+                        shape: 'dot',
+                        size: node.label === 'Menu' ? 22 : node.label === 'SubMenu' ? 17 : 13
+                    };
+                });
 
-                const edgesArray = allEdgesData.map(edge => ({
-                    id: edge.id,
-                    from: edge.source,
-                    to: edge.target,
-                    label: '',
-                    arrows: 'to',
-                    color: { color: '#E0E0E0', highlight: '#FF6B6B' },
-                    width: 1,
-                    font: { size: 9, color: '#999' }
-                }));
+                const edgesArray = allEdgesData.map(edge => {
+                    if (edge.relationship === 'RELATED_TASK') {
+                        return {
+                            id: edge.id,
+                            from: edge.source,
+                            to: edge.target,
+                            label: '',
+                            arrows: 'to',
+                            color: { color: '#CE93D8', highlight: '#9C27B0' },
+                            width: 1,
+                            dashes: [4, 4],
+                            font: { size: 8, color: '#999' }
+                        };
+                    }
+                    return {
+                        id: edge.id,
+                        from: edge.source,
+                        to: edge.target,
+                        label: '',
+                        arrows: 'to',
+                        color: { color: '#E0E0E0', highlight: '#FF6B6B' },
+                        width: 1,
+                        font: { size: 9, color: '#999' }
+                    };
+                });
 
                 nodes = new vis.DataSet(nodesArray);
                 edges = new vis.DataSet(edgesArray);
@@ -588,6 +767,7 @@
                     },
                     nodes: {
                         borderWidth: 2,
+                        borderWidthSelected: 6,
                         shadow: true
                     },
                     edges: {
@@ -620,12 +800,65 @@
 
         function getNodeColor(label) {
             const colors = {
-                'Article': '#97C2FC',
-                'Category': '#FFAB91',
-                'Content': '#A5D6A7',
-                'Media': '#CE93D8'
+                'Menu':     '#FFB74D',
+                'SubMenu':  '#64B5F6',
+                'MenuItem': '#81C784',
+                'QA':       '#CE93D8'
             };
             return colors[label] || '#DDDDDD';
+        }
+
+        function getTaskColor(domain) {
+            const colors = {
+                '전자투표':  '#80DEEA',
+                '사용자관리': '#FFAB91',
+                '시스템':    '#CE93D8',
+                '부과':     '#FFF176',
+                '수납':     '#80CBC4',
+                '검침':     '#C5E1A5',
+                '회계':     '#FFE082',
+                '알림통신':  '#B2EBF2',
+                '입주자관리': '#F8BBD9',
+                '단지관리':  '#E1BEE7',
+                '인사급여':  '#DCEDC8',
+                '기타':     '#F5F5F5',
+            };
+            return colors[domain] || '#EEEEEE';
+        }
+
+        function toggleTaskNodes() {
+            taskVisible = !taskVisible;
+            const btn = document.getElementById('taskToggle');
+            const taskNodeIds = allNodesData
+                .filter(n => n.label === 'Task')
+                .map(n => n.id);
+
+            taskNodeIds.forEach(id => nodes.update({ id, hidden: !taskVisible }));
+
+            if (taskVisible) {
+                btn.textContent = '💡 Task 숨기기';
+                btn.classList.remove('off');
+            } else {
+                btn.textContent = '💡 Task 보기';
+                btn.classList.add('off');
+            }
+        }
+
+        function toggleDebugPanel() {
+            const body = document.getElementById('debugBody');
+            const icon = document.getElementById('debugToggleIcon');
+            const isOpen = body.classList.toggle('open');
+            icon.textContent = isOpen ? '▼ 접기' : '▶ 펼치기';
+        }
+
+        function getNodeBorderColor(label) {
+            const colors = {
+                'Menu':     '#F57C00',
+                'SubMenu':  '#1976D2',
+                'MenuItem': '#388E3C',
+                'QA':       '#7B1FA2'
+            };
+            return colors[label] || '#BDBDBD';
         }
 
         function setQuestion(query) {
@@ -672,6 +905,27 @@
                 `;
                 document.getElementById('answerBox').style.display = 'block';
 
+                // 디버그 패널 채우기
+                document.getElementById('debugRetriever').textContent = data.retriever_used || '-';
+
+                // 노드 칩 렌더링
+                const nodesContainer = document.getElementById('debugNodes');
+                nodesContainer.innerHTML = '';
+                if (data.used_nodes && data.used_nodes.length > 0) {
+                    data.used_nodes.forEach(n => {
+                        const chip = document.createElement('span');
+                        chip.className = 'debug-node-chip';
+                        chip.textContent = n.replace('ElementId_', 'ID:');
+                        nodesContainer.appendChild(chip);
+                    });
+                } else {
+                    nodesContainer.innerHTML = '<span style="color:#999">없음</span>';
+                }
+
+                // 컨텍스트 원문
+                document.getElementById('debugContext').textContent =
+                    data.context ? data.context.trim() : '(컨텍스트 없음)';
+
                 // 그래프 하이라이트
                 highlightSubgraph(data.used_nodes, data.used_edges);
             } catch (error) {
@@ -686,18 +940,37 @@
         function resetGraph() {
             if (!nodes || !edges) return;
 
-            // 모든 노드를 회색으로
             const allNodes = nodes.get();
             allNodes.forEach(node => {
+                const nodeData = allNodesData.find(n => n.id === node.id);
+                const label = nodeData?.label;
+
+                // Task 노드는 항상 도메인 색상 유지 (단, 흐릿하게)
+                if (label === 'Task') {
+                    const domain = nodeData?.properties?.domain || '기타';
+                    const freq = nodeData?.properties?.frequency || 5;
+                    const bg = getTaskColor(domain);
+                    nodes.update({
+                        id: node.id,
+                        color: { background: bg, border: '#BDBDBD',
+                                 highlight: { background: bg, border: '#F57F17' } },
+                        borderWidth: 1,
+                        size: Math.min(22, Math.max(8, Math.sqrt(freq) * 2.8)),
+                        font: { size: 9, color: '#AAAAAA' },
+                        opacity: 0.4
+                    });
+                    return;
+                }
+
+                // Menu 계층 노드는 회색으로
                 nodes.update({
                     id: node.id,
-                    color: {
-                        background: '#E0E0E0',
-                        border: '#BDBDBD'
-                    },
-                    borderWidth: 2,
-                    size: 15,
-                    font: { size: 12, color: '#757575' }
+                    color: { background: '#E8E8E8', border: '#BDBDBD',
+                             highlight: { background: '#FFF9C4', border: '#F57F17' } },
+                    borderWidth: 1,
+                    size: label === 'Menu' ? 22 : label === 'SubMenu' ? 17 : 13,
+                    font: { size: 11, color: '#AAAAAA' },
+                    opacity: 1
                 });
             });
 
@@ -706,65 +979,11 @@
             allEdges.forEach(edge => {
                 edges.update({
                     id: edge.id,
-                    color: { color: '#E0E0E0' },
+                    color: { color: '#DDDDDD' },
                     width: 1,
                     label: ''
                 });
             });
-        }
-
-        // 하이라이트된 Article 노드와 연결된 Category 노드 찾기
-        function findConnectedCategories(articleNodeIds) {
-            const connectedCategoryIds = [];
-
-            allEdgesData.forEach(edge => {
-                // Article -> Category 연결 (BELONGS_TO)
-                if (edge.relationship === 'BELONGS_TO') {
-                    // source가 하이라이트된 Article인 경우
-                    if (articleNodeIds.includes(edge.source)) {
-                        const targetNode = allNodesData.find(n => n.id === edge.target);
-                        if (targetNode && targetNode.label === 'Category') {
-                            connectedCategoryIds.push(edge.target);
-                        }
-                    }
-                    // target이 하이라이트된 Article인 경우 (방향이 반대일 수 있음)
-                    if (articleNodeIds.includes(edge.target)) {
-                        const sourceNode = allNodesData.find(n => n.id === edge.source);
-                        if (sourceNode && sourceNode.label === 'Category') {
-                            connectedCategoryIds.push(edge.source);
-                        }
-                    }
-                }
-            });
-
-            return [...new Set(connectedCategoryIds)]; // 중복 제거
-        }
-
-        // 하이라이트된 Content 노드와 연결된 Article 노드 찾기
-        function findConnectedArticles(contentNodeIds) {
-            const connectedArticleIds = [];
-
-            allEdgesData.forEach(edge => {
-                // Article -> Content 연결 (HAS_CHUNK)
-                if (edge.relationship === 'HAS_CHUNK') {
-                    // source가 Article이고 target이 하이라이트된 Content인 경우
-                    if (contentNodeIds.includes(edge.target)) {
-                        const sourceNode = allNodesData.find(n => n.id === edge.source);
-                        if (sourceNode && sourceNode.label === 'Article') {
-                            connectedArticleIds.push(edge.source);
-                        }
-                    }
-                    // 방향이 반대일 수 있음
-                    if (contentNodeIds.includes(edge.source)) {
-                        const targetNode = allNodesData.find(n => n.id === edge.target);
-                        if (targetNode && targetNode.label === 'Article') {
-                            connectedArticleIds.push(edge.target);
-                        }
-                    }
-                }
-            });
-
-            return [...new Set(connectedArticleIds)]; // 중복 제거
         }
 
         function highlightSubgraph(nodeIds, edgeIds) {
@@ -774,116 +993,118 @@
             console.log('Highlighting edges:', edgeIds);
 
             const matchedNodeIds = [];
-
-            // 노드 매칭
             const allNodes = nodes.get();
+
             nodeIds.forEach(searchId => {
                 // ElementId_ 형식: Neo4j elementId로 직접 매칭
                 if (searchId.startsWith('ElementId_')) {
                     const elementId = searchId.replace('ElementId_', '');
                     allNodes.forEach(node => {
-                        if (node.id === elementId) {
-                            matchedNodeIds.push(node.id);
-                        }
+                        if (node.id === elementId) matchedNodeIds.push(node.id);
                     });
                     return;
                 }
 
-                // 기존 형식: "Article_ART_366_0001124550" 또는 "Category_정치"
+                // "Menu_이름", "SubMenu_이름", "MenuItem_이름" 형식
+                const underIdx = searchId.indexOf('_');
+                if (underIdx === -1) return;
+                const searchLabel = searchId.substring(0, underIdx);
+                const searchValue = searchId.substring(underIdx + 1);
+
                 allNodes.forEach(node => {
                     const nodeData = allNodesData.find(n => n.id === node.id);
                     if (!nodeData) return;
-
-                    const parts = searchId.split('_');
-                    const searchLabel = parts[0];
-                    const searchValue = parts.slice(1).join('_');
-
                     if (nodeData.label !== searchLabel) return;
-
-                    let valueMatches = false;
-                    if (nodeData.properties) {
-                        if (searchLabel === 'Article' && nodeData.properties.article_id === searchValue) {
-                            valueMatches = true;
-                        } else if (searchLabel === 'Category' && nodeData.properties.name === searchValue) {
-                            valueMatches = true;
-                        } else if (searchLabel === 'Content' && nodeData.properties.content_id === searchValue) {
-                            valueMatches = true;
-                        } else if (searchLabel === 'Media' && nodeData.properties.name === searchValue) {
-                            valueMatches = true;
-                        }
-                    }
-
-                    if (valueMatches) {
+                    if (nodeData.properties && nodeData.properties.name === searchValue) {
                         matchedNodeIds.push(node.id);
                     }
                 });
             });
-// HAS_CHUNK 엣지가 있는 경우: Content 노드와 연결된 Article 노드도 추가
-            if (edgeIds.includes('HAS_CHUNK')) {
-                const contentNodeIds = matchedNodeIds.filter(id => {
-                    const node = allNodesData.find(n => n.id === id);
-                    return node && node.label === 'Content';
-                });
-                const connectedArticleIds = findConnectedArticles(contentNodeIds);
-                connectedArticleIds.forEach(artId => {
-                    if (!matchedNodeIds.includes(artId)) {
-                        matchedNodeIds.push(artId);
+
+            // HAS_ITEM / HAS_SUBMENU: 매칭된 하위 노드의 상위(Menu/SubMenu)만 추가
+            // ⚠️ 하향 확장(부모→자식) 금지: 형제 노드까지 함께 하이라이트되는 버그 방지
+            // 관계 방향: (Menu)-[:HAS_SUBMENU]->(SubMenu)-[:HAS_ITEM]->(MenuItem)
+            //   source = 부모, target = 자식
+            //   → target이 matched일 때만 source(부모) 추가 (상향만)
+            {
+                const extraIds = [];
+                allEdgesData.forEach(edge => {
+                    if (['HAS_ITEM', 'HAS_SUBMENU'].includes(edge.relationship)) {
+                        if (matchedNodeIds.includes(edge.target) && !matchedNodeIds.includes(edge.source)) {
+                            extraIds.push(edge.source);
+                        }
                     }
                 });
+                extraIds.forEach(id => { if (!matchedNodeIds.includes(id)) matchedNodeIds.push(id); });
             }
 
-            // BELONGS_TO 엣지가 있는 경우: Article 노드와 연결된 Category 노드도 추가
-            if (edgeIds.includes('BELONGS_TO')) {
-                const articleNodeIds = matchedNodeIds.filter(id => {
-                    const node = allNodesData.find(n => n.id === id);
-                    return node && node.label === 'Article';
-                });
-                const connectedCategoryIds = findConnectedCategories(articleNodeIds);
-                connectedCategoryIds.forEach(catId => {
-                    if (!matchedNodeIds.includes(catId)) {
-                        matchedNodeIds.push(catId);
+            // RELATED_TASK 엣지: 매칭된 MenuItem에 연결된 Task 노드도 하이라이트
+            if (taskVisible) {
+                const taskIds = [];
+                allEdgesData.forEach(edge => {
+                    if (edge.relationship === 'RELATED_TASK') {
+                        if (matchedNodeIds.includes(edge.source) && !matchedNodeIds.includes(edge.target)) {
+                            taskIds.push(edge.target);
+                        }
                     }
                 });
+                taskIds.forEach(id => { if (!matchedNodeIds.includes(id)) matchedNodeIds.push(id); });
             }
 
             console.log('Final matched nodes:', matchedNodeIds);
 
-            // 노드 하이라이트
+            // 매칭된 노드 하이라이트 (원래 색상 + 강조 테두리)
             matchedNodeIds.forEach(id => {
                 const nodeData = allNodesData.find(n => n.id === id);
-                const originalColor = getNodeColor(nodeData?.label);
+                const label = nodeData?.label;
+
+                // Task 노드: 도메인 색상 + 보라 테두리로 강조
+                if (label === 'Task') {
+                    const domain = nodeData?.properties?.domain || '기타';
+                    const freq = nodeData?.properties?.frequency || 5;
+                    const bg = getTaskColor(domain);
+                    nodes.update({
+                        id: id,
+                        color: { background: bg, border: '#7B1FA2',
+                                 highlight: { background: bg, border: '#F57F17' } },
+                        borderWidth: 3,
+                        size: Math.min(26, Math.max(10, Math.sqrt(freq) * 3.2)),
+                        font: { size: 10, color: '#000' },
+                        opacity: 1
+                    });
+                    return;
+                }
+
+                // Menu 계층 노드
+                const nodeBg = getNodeColor(label);
                 nodes.update({
                     id: id,
                     color: {
-                        background: originalColor,
-                        border: '#C92A2A'
+                        background: nodeBg,
+                        border: '#C92A2A',
+                        highlight: { background: nodeBg, border: '#F57F17' }
                     },
                     borderWidth: 4,
-                    size: 25,
-                    font: { size: 14, color: '#000' }
+                    size: label === 'Menu' ? 30 : label === 'SubMenu' ? 24 : 18,
+                    font: { size: 13, color: '#000' }
                 });
             });
 
-            // 엣지 하이라이트 (양쪽 노드가 모두 활성화된 엣지만)
+            // 엣지 하이라이트 (양쪽 노드가 모두 활성화된 엣지)
             if (matchedNodeIds.length > 0) {
                 const allEdges = edges.get();
                 allEdges.forEach(edge => {
                     const edgeData = allEdgesData.find(e => e.id === edge.id);
                     if (!edgeData) return;
-
-                    const sourceActivated = matchedNodeIds.includes(edgeData.source);
-                    const targetActivated = matchedNodeIds.includes(edgeData.target);
-
-                    if (sourceActivated && targetActivated) {
-                        const shouldHighlight = edgeIds.length === 0 || edgeIds.includes(edgeData.relationship);
-                        if (shouldHighlight) {
-                            edges.update({
-                                id: edge.id,
-                                color: { color: '#FF6B6B' },
-                                width: 3,
-                                label: edgeData.relationship
-                            });
-                        }
+                    if (matchedNodeIds.includes(edgeData.source) && matchedNodeIds.includes(edgeData.target)) {
+                        const isTaskEdge = edgeData.relationship === 'RELATED_TASK';
+                        edges.update({
+                            id: edge.id,
+                            color: { color: isTaskEdge ? '#9C27B0' : '#FF6B6B' },
+                            width: isTaskEdge ? 2 : 3,
+                            dashes: isTaskEdge ? [4, 4] : false,
+                            label: edgeData.relationship
+                        });
                     }
                 });
             }
@@ -892,10 +1113,7 @@
             if (matchedNodeIds.length > 0) {
                 network.fit({
                     nodes: matchedNodeIds,
-                    animation: {
-                        duration: 1000,
-                        easingFunction: 'easeInOutQuad'
-                    }
+                    animation: { duration: 1000, easingFunction: 'easeInOutQuad' }
                 });
             }
         }

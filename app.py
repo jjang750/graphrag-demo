@@ -1,8 +1,8 @@
 import os
 import re
 from contextlib import asynccontextmanager
-from typing import List
-from fastapi import FastAPI, HTTPException
+from typing import List, Optional
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
@@ -69,9 +69,11 @@ embedder = GeminiEmbedder(
 )
 
 # 전역 변수로 retriever 저장
-INDEX_NAME = "content_vector_index"
+INDEX_NAME = "menu_vector_index"
+QA_INDEX_NAME = "qa_vector_index"
 vector_retriever = None
 vector_cypher_retriever = None
+qa_retriever = None
 text2cypher_retriever = None
 tools_retriever = None
 graphrag = None
@@ -89,148 +91,50 @@ class QueryResponse(BaseModel):
     context: str = ""
 
 
-def extract_all_field_values(text: str, field_name: str) -> List[str]:
-    """텍스트에서 특정 필드의 모든 값을 추출 (다양한 형식 지원)"""
-    values = []
-
-    # 패턴 1: field_name='value' 또는 field_name="value" (Python repr 스타일)
-    pattern1 = rf"['\"]?{field_name}['\"]?\s*=\s*['\"]([^'\"]+)['\"]"
-    values.extend(re.findall(pattern1, text))
-
-    # 패턴 2: 'field_name': 'value' (딕셔너리 스타일)
-    pattern2 = rf"['\"]?{field_name}['\"]?\s*:\s*['\"]([^'\"]+)['\"]"
-    values.extend(re.findall(pattern2, text))
-
-    # 패턴 3: ART_로 시작하는 article_id 직접 추출
-    if field_name == "article_id":
-        pattern3 = r"(ART_\d{3}_\d{10})"
-        values.extend(re.findall(pattern3, text))
-
-    # 패턴 4: content_id 직접 추출 (ART_XXX_XXXXXXXXXX_chunk_N 형식)
-    if field_name == "content_id":
-        pattern4 = r"(ART_\d{3}_\d{10}_chunk_\d+)"
-        values.extend(re.findall(pattern4, text))
-
-    # 중복 제거 후 반환
-    return list(set(values))
-
-
-def is_valid_article_id(article_id: str) -> bool:
-    """유효한 article_id 형식인지 확인"""
-    # ART_로 시작하고 숫자 패턴을 따르는지 확인
-    return bool(re.match(r"^ART_\d{3}_\d{10}$", article_id))
-
-
-def is_valid_category(category: str) -> bool:
-    """유효한 카테고리명인지 확인"""
-    # 한글 카테고리만 허용 (정치, 경제, 사회 등)
-    invalid_values = ["Unknown", "No title", "text2cypher_retriever",
-                      "vector_retriever", "vectorcypher_retriever"]
-    if category in invalid_values:
-        return False
-    # retriever 관련 문자열 제외
-    if "retriever" in category.lower():
-        return False
-    return len(category) > 0
-
-
-def extract_nodes_edges_from_cypher(cypher_query: str) -> tuple[List[str], List[str]]:
-    """Cypher 쿼리에서 사용된 노드와 엣지 추출"""
-    nodes = []
-    edges = []
-
-    # 노드 레이블 추출 (예: (a:Article), (c:Category))
-    node_pattern = r'\([a-z]+:(\w+)(?:\s+\{[^}]*\})?\)'
-    node_matches = re.findall(node_pattern, cypher_query)
-    nodes.extend(node_matches)
-
-    # 관계 타입 추출 (예: [:BELONGS_TO], [:PUBLISHED])
-    edge_pattern = r'\[:(\w+)\]'
-    edge_matches = re.findall(edge_pattern, cypher_query)
-    edges.extend(edge_matches)
-
-    return list(set(nodes)), list(set(edges))
-
-
 def extract_nodes_from_content(content: str) -> tuple[List[str], List[str]]:
-    """검색 결과 content에서 노드/엣지 추출 (모든 값 추출)"""
+    """검색 결과에서 Menu/SubMenu/MenuItem 노드와 엣지 추출"""
     nodes = []
     edges = []
 
-    # article_id - 모든 article_id 값 추출 (유효성 검사 포함)
-    article_ids = extract_all_field_values(content, "article_id")
-    for article_id in article_ids:
-        if article_id and is_valid_article_id(article_id):
-            nodes.append(f"Article_{article_id}")
+    # ── vectorcypher_retriever 포맷 ──────────────────────────────
+    # main_menu='검침' sub_menu='전기검침' menu_item_name='전기검침'
+    main_match = re.search(r"main_menu=\'?([^\'\\,\n]+)\'?", content)
+    sub_match  = re.search(r"sub_menu=\'?([^\'\\,\n]+)\'?", content)
+    item_match = re.search(r"menu_item_name=\'?([^\'\\,\n]+)\'?", content)
 
-    # category_name - 모든 category 값 추출 (유효성 검사 포함)
-    categories = extract_all_field_values(content, "category_name")
-    for category in categories:
-        if is_valid_category(category):
-            nodes.append(f"Category_{category}")
+    if main_match:
+        nodes.append(f"Menu_{main_match.group(1).strip()}")
+    if sub_match and sub_match.group(1).strip():
+        nodes.append(f"SubMenu_{sub_match.group(1).strip()}")
+        edges.append("HAS_SUBMENU")
+    if item_match:
+        nodes.append(f"MenuItem_{item_match.group(1).strip()}")
+        edges.append("HAS_ITEM")
 
-    # content_id - 모든 content_id 값 추출
-    content_ids = extract_all_field_values(content, "content_id")
-    for content_id in content_ids:
-        if content_id:
-            nodes.append(f"Content_{content_id}")
-
-    # 관계 추정
-    if article_ids and categories:
-        edges.append("BELONGS_TO")
-    if article_ids and content_ids:
-        edges.append("HAS_CHUNK")
-
-    return list(set(nodes)), list(set(edges))
-
-
-def extract_vectorcypher_nodes(content: str) -> tuple[List[str], List[str]]:
-    """VectorCypherRetriever 결과에서 핵심 노드만 추출 (related_articles 제외)"""
-    nodes = []
-    edges = []
-
-    # related_articles 이전 부분만 파싱 (관련 기사 제외)
-    related_idx = content.find("related_articles")
-    if related_idx > 0:
-        main_content = content[:related_idx]
-    else:
-        main_content = content
-
-    # content_id 추출 (이스케이프된 따옴표 포함)
-    # 형식: content_id=\'ART_138_0002210299_chunk_0\'
-    content_id_match = re.search(r"content_id=\\?['\"]?(ART_\d{3}_\d{10}_chunk_\d+)", main_content)
-    if content_id_match:
-        content_id = content_id_match.group(1)
-        nodes.append(f"Content_{content_id}")
-
-        # content_id에서 article_id 추출 (chunk 부분 제거)
-        article_id = re.sub(r"_chunk_\d+$", "", content_id)
-        if is_valid_article_id(article_id):
-            nodes.append(f"Article_{article_id}")
-            edges.append("HAS_CHUNK")
-
-    # article_id 추출 (메인 기사) - content_id에서 못 찾은 경우
-    if not any("Article_" in n for n in nodes):
-        article_match = re.search(r"article_id=\\?['\"]?(ART_\d{3}_\d{10})", main_content)
-        if article_match:
-            article_id = article_match.group(1)
-            if is_valid_article_id(article_id):
-                nodes.append(f"Article_{article_id}")
-
-    # category_name 추출
-    category_match = re.search(r"category_name=\\?['\"]?([가-힣/]+)", main_content)
-    if category_match:
-        category = category_match.group(1).strip()
-        if is_valid_category(category):
-            nodes.append(f"Category_{category}")
-            edges.append("BELONGS_TO")
+    # ── qa_retriever 포맷 ────────────────────────────────────────
+    # menu_path='[관련 메뉴] 검침 > 수도검침 > 수도사용량조회 / '
+    if not nodes:
+        path_match = re.search(
+            r'\[관련 메뉴\]\s*([\가-힣A-Za-z0-9()\s]+(?:\s*>\s*[\가-힣A-Za-z0-9()\s]+)*)',
+            content
+        )
+        if path_match:
+            parts = [p.strip() for p in path_match.group(1).split('>') if p.strip()]
+            if len(parts) >= 1:
+                nodes.append(f"Menu_{parts[0]}")
+            if len(parts) >= 2:
+                nodes.append(f"SubMenu_{parts[1]}")
+                edges.append("HAS_SUBMENU")
+            if len(parts) >= 3:
+                nodes.append(f"MenuItem_{parts[2]}")
+                edges.append("HAS_ITEM")
 
     return list(set(nodes)), list(set(edges))
 
 
 def initialize_retrievers():
     """Retrievers 초기화"""
-    global vector_retriever, vector_cypher_retriever, text2cypher_retriever, tools_retriever, graphrag
+    global vector_retriever, vector_cypher_retriever, qa_retriever, text2cypher_retriever, tools_retriever, graphrag
 
     # Vector Retriever
     vector_retriever = VectorRetriever(
@@ -241,28 +145,24 @@ def initialize_retrievers():
 
     # VectorCypher Retriever
     retrieval_query = """
-    WITH node AS content, score
-    MATCH (content)<-[:HAS_CHUNK]-(article:Article)
-    OPTIONAL MATCH (article)-[:BELONGS_TO]->(category:Category)
-    OPTIONAL MATCH (category)<-[:BELONGS_TO]-(related_article:Article)
-    WHERE related_article <> article
-
+    WITH node AS menuItem, score
+    OPTIONAL MATCH (menuItem)<-[:HAS_ITEM]-(subMenu:SubMenu)
+    OPTIONAL MATCH (subMenu)<-[:HAS_SUBMENU]-(menu:Menu)
+    OPTIONAL MATCH (menuItem)<-[:HAS_ITEM]-(menu2:Menu)
+    OPTIONAL MATCH (qa:QA)-[:IN_MENU]->(menuItem)
+    WITH menuItem, score, subMenu, menu, menu2,
+         [qa IN collect(DISTINCT qa) WHERE qa IS NOT NULL
+          | 'Q: ' + qa.question + '\nA: ' + qa.answer][0..3] AS qa_texts
     RETURN
-        content.content_id AS content_id,
-        content.chunk AS chunk,
-        content.title AS content_title,
-        article.article_id AS article_id,
-        article.title AS article_title,
-        article.url AS article_url,
-        article.published_date AS article_date,
-        category.name AS category_name,
+        menuItem.name AS menu_item_name,
+        menuItem.description AS description,
+        menuItem.menu_path AS menu_path,
+        COALESCE(subMenu.name, '') AS sub_menu,
+        COALESCE(menu.name, menu2.name, menuItem.main_menu) AS main_menu,
         score AS similarity_score,
-        collect(DISTINCT {
-            article_id: related_article.article_id,
-            title: related_article.title,
-            url: related_article.url,
-            published_date: related_article.published_date
-        })[0..5] AS related_articles
+        CASE WHEN size(qa_texts) > 0
+             THEN reduce(s='[관련 QA 사례]\n', t IN qa_texts | s + t + '\n\n')
+             ELSE '' END AS related_qa
     """
 
     vector_cypher_retriever = VectorCypherRetriever(
@@ -276,27 +176,27 @@ def initialize_retrievers():
     neo4j_schema = get_neo4j_schema()
     examples = [
         """
-        USER INPUT: 경제 분야의 최신 뉴스 알려주세요
+        USER INPUT: 검침 메뉴에는 어떤 기능들이 있나요?
         CYPHER QUERY:
-        MATCH (a:Article)-[:BELONGS_TO]->(c:Category {name: "경제"})
-        RETURN a.article_id, a.title, a.url, a.published_date
-        ORDER BY a.published_date DESC
-        LIMIT 10
+        MATCH (m:Menu {name: "검침"})-[:HAS_SUBMENU]->(s:SubMenu)-[:HAS_ITEM]->(i:MenuItem)
+        RETURN m.name AS 대분류, s.name AS 중분류, i.name AS 소분류, i.description AS 설명
         """,
         """
-        USER INPUT: 정치 카테고리의 최신 기사 5개를 보여주세요
+        USER INPUT: 부과 기초정보에서 할 수 있는 것들을 알려주세요
         CYPHER QUERY:
-        MATCH (a:Article)-[:BELONGS_TO]->(c:Category {name: "정치"})
-        RETURN a.article_id, a.title, a.url, a.published_date
-        ORDER BY a.published_date DESC
-        LIMIT 5
+        MATCH (m:Menu {name: "부과"})-[:HAS_SUBMENU]->(s:SubMenu {name: "기초정보"})-[:HAS_ITEM]->(i:MenuItem)
+        RETURN i.name AS 메뉴, i.description AS 설명
         """,
         """
-        USER INPUT: 카테고리별 기사 개수를 알려주세요
+        USER INPUT: 전자결재 메뉴 목록을 보여주세요
         CYPHER QUERY:
-        MATCH (a:Article)-[:BELONGS_TO]->(c:Category)
-        RETURN c.name as category, count(a) as article_count
-        ORDER BY article_count DESC
+        MATCH (m:Menu {name: "Xp전자결재"})-[:HAS_ITEM]->(i:MenuItem)
+        RETURN i.name AS 메뉴, i.description AS 설명
+        """,
+        """
+        USER INPUT: 전체 대분류 메뉴 목록
+        CYPHER QUERY:
+        MATCH (m:Menu) RETURN m.name AS 대분류메뉴
         """,
     ]
 
@@ -307,51 +207,67 @@ def initialize_retrievers():
         examples=examples,
     )
 
+    # QA Retriever
+    qa_retrieval_query = """
+    WITH node AS qa, score
+    OPTIONAL MATCH (qa)-[:IN_MENU]->(m:MenuItem)
+    WITH qa, score, collect(DISTINCT m.menu_path) AS menu_paths
+    RETURN
+        qa.question AS question,
+        qa.answer AS answer,
+        qa.tags AS tags,
+        qa.source AS source,
+        score AS similarity_score,
+        CASE WHEN size(menu_paths) > 0
+             THEN '[관련 메뉴] ' + reduce(s='', p IN menu_paths | s + p + ' / ')
+             ELSE '' END AS menu_path
+    """
+    qa_retriever = VectorCypherRetriever(
+        driver=driver,
+        index_name=QA_INDEX_NAME,
+        retrieval_query=qa_retrieval_query,
+        embedder=embedder,
+    )
+
     vector_tool = vector_retriever.convert_to_tool(
         name="vector_retriever",
-        description="키워드나 개념으로 유사한 기사를 빠르게 찾을 때 사용. 단순 검색용."
+        description="기능 설명이나 키워드로 관련 메뉴를 의미 기반으로 검색. 예: '급여 계산', '차량 등록', '수납 처리 방법'"
     )
     vector_cypher_tool = vector_cypher_retriever.convert_to_tool(
         name="vectorcypher_retriever",
-        description="기사의 '상세 정보', '전체 정보', '내용', '본문'을 요청할 때 사용. 특정 주제/키워드로 기사를 찾고 제목, URL, 날짜, 카테고리, 관련 기사까지 상세 정보를 반환."
+        description="특정 기능의 상세 설명과 메뉴 경로(대분류>중분류>소분류)를 함께 조회. 예: '입주 등록은 어떻게 하나요?', '이 기능이 어느 메뉴에 있나요?'"
     )
     text2cypher_tool = text2cypher_retriever.convert_to_tool(
         name="text2cypher_retriever",
-        description="카테고리별 기사 수, 특정 카테고리의 기사 목록, 통계, 집계 등 그래프 구조 기반 쿼리에 사용. 예: '경제 카테고리 기사', '카테고리별 기사 개수'"
+        description="특정 대분류/중분류의 전체 메뉴 목록 조회, 메뉴 구조 파악에 사용. 예: '검침 메뉴 전체 목록', '회계 메뉴에는 뭐가 있나요?', '전체 메뉴 목록'"
+    )
+    qa_tool = qa_retriever.convert_to_tool(
+        name="qa_retriever",
+        description="오류 해결, 문제 상황, 사용 방법 등 실제 질문과 답변 사례를 검색할 때 사용. 예: '검침값이 안 나와요', '전표가 생성되지 않아요', '~하는 방법'"
     )
 
     tools_retriever = ToolsRetriever(
         driver=driver,
         llm=llm,
-        tools=[vector_tool, vector_cypher_tool, text2cypher_tool],
+        tools=[vector_tool, vector_cypher_tool, text2cypher_tool, qa_tool],
     )
 
     prompt_template = RagTemplate(
-        template="""당신은 뉴스 기사 정보를 제공하는 전문 어시스턴트입니다.
+        template="""당신은 XPERP 시스템의 매뉴얼 안내 챗봇입니다.
+사용자의 질문에 대해 검색된 정보를 바탕으로 정확하고 친절하게 안내하세요.
 
 질문: {query_text}
 
-검색된 문서 정보:
+검색된 정보:
 {context}
 
 지침:
-1. 사용자의 질문에 직접적으로 답변하세요.
-2. **검색된 모든 기사**를 빠짐없이 답변에 포함하세요. 일부만 선택하지 마세요.
-3. 먼저 검색된 기사들을 종합 분석한 답변을 제공하세요.
-4. 답변 마지막에 출처(기사 목록)를 정리하세요.
-5. 각 기사의 제목(title), URL(url), 발행일(published_date)을 모두 포함하세요.
+1. 검색된 정보가 메뉴 설명인 경우: 메뉴 경로를 [대분류 > 중분류 > 소분류] 형식으로 표시하세요.
+2. 검색된 정보가 QA(질문/답변) 사례인 경우: 답변 내용을 중심으로 명확하게 안내하세요.
+3. 메뉴 설명과 함께 [관련 QA 사례]가 포함된 경우: QA 사례를 활용하여 더 구체적인 안내를 제공하세요.
+4. QA에 [관련 메뉴] 경로가 포함된 경우: 해당 메뉴 경로를 답변에 포함하세요.
+5. 여러 관련 항목이 있다면 모두 안내하세요.
 6. 검색 결과에 없는 내용은 추측하지 마세요.
-
-기사 목록 답변 형식:
-
-**검색된 기사 목록 (총 N건):**
-1. **[기사 제목]** (발행일)
-   - URL: [기사 URL]
-   - 핵심: [한 줄 요약]
-
-2. **[기사 제목]** (발행일)
-   - URL: [기사 URL]
-   - 핵심: [한 줄 요약]
 
 답변:""",
         expected_inputs=["context", "query_text"]
@@ -396,26 +312,259 @@ async def root():
     return FileResponse("index.html")
 
 
+@app.get("/admin")
+async def admin():
+    """관리 화면"""
+    return FileResponse("admin.html")
+
+
+# ─────────────────────────────────────────
+# Admin API
+# ─────────────────────────────────────────
+
+@app.get("/admin/menus")
+async def admin_get_menus():
+    """메뉴 트리 + 각 MenuItem의 연결 QA 수 반환"""
+    try:
+        with driver.session() as session:
+            result = session.run("""
+                MATCH (m:MenuItem)
+                OPTIONAL MATCH (q:QA)-[:IN_MENU]->(m)
+                WITH m, count(q) AS qa_count
+                OPTIONAL MATCH (s:SubMenu)-[:HAS_ITEM]->(m)
+                OPTIONAL MATCH (menu:Menu)-[:HAS_SUBMENU]->(s)
+                OPTIONAL MATCH (menu2:Menu)-[:HAS_ITEM]->(m)
+                RETURN
+                    m.id            AS id,
+                    m.name          AS name,
+                    m.menu_path     AS menu_path,
+                    m.main_menu     AS main_menu,
+                    m.sub_menu      AS sub_menu,
+                    qa_count
+                ORDER BY m.main_menu, m.sub_menu, m.name
+            """)
+            items = [dict(r) for r in result]
+        return {"items": items}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/admin/qa")
+async def admin_get_qa(
+    menuitem_id: Optional[str] = Query(None, description="연결된 QA 조회 (MenuItem.id)"),
+    q: Optional[str] = Query(None, description="QA 검색어"),
+    source: Optional[str] = Query(None, description="소스 파일 필터"),
+    unlinked: bool = Query(False, description="미연결 QA만 조회"),
+    limit: int = Query(50, le=200)
+):
+    """QA 목록 조회 — 필터: menuitem_id | 검색어 | 소스 | 미연결"""
+    try:
+        with driver.session() as session:
+            if menuitem_id:
+                # 특정 MenuItem에 연결된 QA
+                result = session.run("""
+                    MATCH (q:QA)-[:IN_MENU]->(m:MenuItem {id: $mid})
+                    RETURN q.id AS id, q.question AS question,
+                           q.answer AS answer, q.tags AS tags, q.source AS source
+                    ORDER BY q.id
+                    LIMIT $limit
+                """, mid=menuitem_id, limit=limit)
+            elif unlinked:
+                # IN_MENU 연결이 없는 QA
+                where = "WHERE NOT (q)-[:IN_MENU]->()"
+                if source:
+                    where += " AND q.source = $source"
+                if q:
+                    where += " AND (q.question CONTAINS $q OR q.answer CONTAINS $q)"
+                result = session.run(f"""
+                    MATCH (q:QA) {where}
+                    RETURN q.id AS id, q.question AS question,
+                           q.answer AS answer, q.tags AS tags, q.source AS source
+                    ORDER BY q.id
+                    LIMIT $limit
+                """, q=q or "", source=source or "", limit=limit)
+            else:
+                # 검색어 조회
+                where_clauses = []
+                if source:
+                    where_clauses.append("q.source = $source")
+                if q:
+                    where_clauses.append("(q.question CONTAINS $q OR q.answer CONTAINS $q)")
+                where = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
+                result = session.run(f"""
+                    MATCH (q:QA) {where}
+                    RETURN q.id AS id, q.question AS question,
+                           q.answer AS answer, q.tags AS tags, q.source AS source
+                    ORDER BY q.id
+                    LIMIT $limit
+                """, q=q or "", source=source or "", limit=limit)
+
+            rows = []
+            for r in result:
+                rows.append({
+                    "id": r["id"],
+                    "question": r["question"],
+                    "answer": r["answer"],
+                    "tags": r["tags"] or [],
+                    "source": r["source"],
+                })
+        return {"items": rows, "count": len(rows)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/admin/qa/{qa_id}/detail")
+async def admin_get_qa_detail(qa_id: str):
+    """QA 단건 조회 (ID 직접 지정)"""
+    try:
+        with driver.session() as session:
+            result = session.run("""
+                MATCH (q:QA {id: $qa_id})
+                RETURN q.id AS id, q.question AS question,
+                       q.answer AS answer, q.tags AS tags, q.source AS source
+            """, qa_id=qa_id)
+            row = result.single()
+            if not row:
+                raise HTTPException(status_code=404, detail="QA를 찾을 수 없습니다")
+            return {
+                "id": row["id"],
+                "question": row["question"],
+                "answer": row["answer"],
+                "tags": row["tags"] or [],
+                "source": row["source"],
+            }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/admin/qa/{qa_id}/menus")
+async def admin_get_qa_menus(qa_id: str):
+    """특정 QA에 연결된 MenuItem 목록"""
+    try:
+        with driver.session() as session:
+            result = session.run("""
+                MATCH (q:QA {id: $qa_id})-[:IN_MENU]->(m:MenuItem)
+                RETURN m.id AS id, m.name AS name, m.menu_path AS menu_path
+            """, qa_id=qa_id)
+            items = [dict(r) for r in result]
+        return {"items": items}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class LinkRequest(BaseModel):
+    qa_id: str
+    menuitem_id: str
+
+
+@app.post("/admin/qa-link")
+async def admin_create_link(req: LinkRequest):
+    """QA ↔ MenuItem 연결 생성"""
+    try:
+        with driver.session() as session:
+            result = session.run("""
+                MATCH (q:QA {id: $qa_id})
+                MATCH (m:MenuItem {id: $mid})
+                MERGE (q)-[r:IN_MENU]->(m)
+                RETURN q.id AS qa_id, m.id AS menu_id, m.menu_path AS menu_path
+            """, qa_id=req.qa_id, mid=req.menuitem_id)
+            row = result.single()
+            if not row:
+                raise HTTPException(status_code=404, detail="QA 또는 MenuItem을 찾을 수 없습니다")
+        return {"status": "ok", "qa_id": row["qa_id"], "menu_path": row["menu_path"]}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/admin/qa-link")
+async def admin_delete_link(req: LinkRequest):
+    """QA ↔ MenuItem 연결 해제"""
+    try:
+        with driver.session() as session:
+            session.run("""
+                MATCH (q:QA {id: $qa_id})-[r:IN_MENU]->(m:MenuItem {id: $mid})
+                DELETE r
+            """, qa_id=req.qa_id, mid=req.menuitem_id)
+        return {"status": "ok"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/admin/sources")
+async def admin_get_sources():
+    """QA source 목록 + 수량"""
+    try:
+        with driver.session() as session:
+            result = session.run("""
+                MATCH (q:QA)
+                RETURN q.source AS source, count(q) AS cnt
+                ORDER BY cnt DESC
+            """)
+            items = [{"source": r["source"], "count": r["cnt"]} for r in result]
+        return {"items": items}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/admin/review")
+async def admin_review(
+    source: str = Query(..., description="검토할 QA 소스"),
+    limit: int = Query(200, le=500),
+):
+    """소스별 연결된 QA + 메뉴 한 번에 조회 (오탐 검토용)"""
+    try:
+        with driver.session() as session:
+            result = session.run("""
+                MATCH (q:QA {source: $source})-[:IN_MENU]->(m:MenuItem)
+                WITH q, collect({
+                    id: m.id,
+                    name: m.name,
+                    path: m.menu_path,
+                    main: m.main_menu
+                }) AS menus
+                RETURN q.id AS id, q.question AS question,
+                       q.source AS source, q.tags AS tags, menus
+                ORDER BY q.id
+                LIMIT $limit
+            """, source=source, limit=limit)
+            items = []
+            for r in result:
+                items.append({
+                    "id": r["id"],
+                    "question": r["question"],
+                    "source": r["source"],
+                    "tags": r["tags"] or [],
+                    "menus": list(r["menus"]),
+                })
+        return {"items": items, "count": len(items)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/graph")
 async def get_graph():
     """전체 그래프 구조 반환"""
     try:
         with driver.session() as session:
-            # 노드 가져오기 (모든 노드)
+            # 노드 가져오기 (Menu 계층 + Task)
             nodes_result = session.run("""
                 MATCH (n)
-                WHERE n:Article OR n:Category OR n:Content OR n:Media
+                WHERE n:Menu OR n:SubMenu OR n:MenuItem OR n:Task
                 RETURN
                     elementId(n) as id,
                     labels(n)[0] as label,
+                    n.name as title,
                     CASE
-                        WHEN n:Article THEN n.title
-                        WHEN n:Category THEN n.name
-                        WHEN n:Content THEN substring(n.chunk, 0, 50) + '...'
-                        WHEN n:Media THEN n.name
-                        ELSE 'Unknown'
-                    END as title,
-                    properties(n) as properties
+                        WHEN n:Menu     THEN {name: n.name}
+                        WHEN n:SubMenu  THEN {name: n.name, main_menu: n.main_menu}
+                        WHEN n:MenuItem THEN {name: n.name, description: n.description, menu_path: n.menu_path}
+                        WHEN n:Task     THEN {name: n.name, domain: n.domain, type: n.type, frequency: n.frequency}
+                        ELSE {}
+                    END as properties
             """)
 
             nodes = []
@@ -427,11 +576,15 @@ async def get_graph():
                     "properties": dict(record["properties"])
                 })
 
-            # 엣지 가져오기 (모든 엣지)
+            # 엣지 가져오기: Menu 계층 엣지 + MenuItem→Task RELATED_TASK 엣지
             edges_result = session.run("""
                 MATCH (n)-[r]->(m)
-                WHERE (n:Article OR n:Category OR n:Content OR n:Media)
-                  AND (m:Article OR m:Category OR m:Content OR m:Media)
+                WHERE (
+                    (n:Menu OR n:SubMenu OR n:MenuItem)
+                    AND (m:Menu OR m:SubMenu OR m:MenuItem)
+                ) OR (
+                    n:MenuItem AND type(r) = 'RELATED_TASK' AND m:Task
+                )
                 RETURN
                     elementId(r) as id,
                     elementId(n) as source,
@@ -459,11 +612,27 @@ async def get_graph():
 @app.post("/query", response_model=QueryResponse)
 async def query_graphrag(req: QueryRequest):
     """GraphRAG 쿼리 실행 및 사용된 노드/엣지 반환"""
+    import time as _time
     try:
         if graphrag is None:
             raise HTTPException(status_code=500, detail="GraphRAG not initialized")
 
-        result = graphrag.search(query_text=req.question, return_context=True)
+        # 429 분당 한도 초과 시 자동 재시도
+        last_err = None
+        for attempt in range(4):
+            try:
+                result = graphrag.search(query_text=req.question, return_context=True)
+                break
+            except Exception as e:
+                if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
+                    wait = 15 * (attempt + 1)
+                    print(f"⚠️  LLM 429 - {wait}초 후 재시도 ({attempt+1}/4)")
+                    _time.sleep(wait)
+                    last_err = e
+                else:
+                    raise
+        else:
+            raise last_err
 
         # 사용된 노드와 엣지 추출
         used_nodes = []
@@ -495,42 +664,27 @@ async def query_graphrag(req: QueryRequest):
                             elif 'retriever_name' in item.metadata:
                                 retriever_used = item.metadata['retriever_name']
 
-                            # VectorRetriever: score 기반 필터링
+                            # ElementId 기반 노드 매칭 (vector/vectorcypher retriever)
                             if 'id' in item.metadata and 'nodeLabels' in item.metadata:
                                 node_id = item.metadata['id']
                                 node_labels = item.metadata['nodeLabels']
                                 score = item.metadata.get('score', 1.0)
 
-                                if 'Content' in node_labels and score >= 0.7:
+                                our_labels = {'MenuItem', 'Menu', 'SubMenu', 'QA'}
+                                if our_labels.intersection(set(node_labels)) and score >= 0.7:
                                     used_nodes.append(f"ElementId_{node_id}")
-                                    used_edges.append("HAS_CHUNK")
                                     filtered_count += 1
                             else:
                                 filtered_count += 1
 
-                        # content 처리
+                        # content 처리 + 이름 기반 노드 추출 (전체 retriever 공통)
                         if hasattr(item, 'content'):
                             content = str(item.content)
                             context_str += content + "\n\n"
 
-                            # VectorRetriever가 아닌 경우 노드/엣지 추출
-                            if retriever_used != "vector_retriever":
-                                if retriever_used == "vectorcypher_retriever":
-                                    nodes, edges = extract_vectorcypher_nodes(content)
-                                else:
-                                    nodes, edges = extract_nodes_from_content(content)
-
-                                used_nodes.extend(nodes)
-                                used_edges.extend(edges)
-
-                            # Text2Cypher: 카테고리 추론
-                            if retriever_used == "text2cypher_retriever":
-                                if not any("Category" in n for n in used_nodes):
-                                    for cat in ["정치", "경제", "사회", "생활/문화", "스포츠", "IT/과학"]:
-                                        if cat in req.question:
-                                            used_nodes.append(f"Category_{cat}")
-                                            used_edges.append("BELONGS_TO")
-                                            break
+                            nodes_from_content, edges_from_content = extract_nodes_from_content(content)
+                            used_nodes.extend(nodes_from_content)
+                            used_edges.extend(edges_from_content)
 
         except Exception as parse_error:
             print(f"⚠️ 파싱 오류: {parse_error}")

@@ -1,3 +1,10 @@
 .venv
 .env
+.idea
+.claude
 __pycache__
+/docs
+/manuals
+/claudedocs
+*.csv
+*.xlsx

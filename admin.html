@@ -1,0 +1,804 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>XPERP QA-메뉴 연결 관리</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Malgun Gothic', sans-serif; font-size: 13px; background: #F5F5F5; color: #333; height: 100vh; display: flex; flex-direction: column; }
+
+/* 헤더 */
+.header {
+    display: flex; align-items: center; gap: 16px;
+    padding: 10px 20px;
+    background: #1A237E; color: #fff;
+}
+.header h1 { font-size: 16px; font-weight: 700; }
+.header a { color: #90CAF9; font-size: 12px; text-decoration: none; }
+.header a:hover { text-decoration: underline; }
+.stat-chips { display: flex; gap: 8px; margin-left: auto; }
+.stat-chip {
+    padding: 3px 10px; border-radius: 12px;
+    font-size: 11px; font-weight: 600;
+    background: rgba(255,255,255,0.15); color: #fff;
+}
+
+/* 3-패널 레이아웃 */
+.main { display: flex; flex: 1; overflow: hidden; gap: 0; }
+
+/* 패널 공통 */
+.panel { display: flex; flex-direction: column; overflow: hidden; background: #fff; }
+.panel-header {
+    padding: 10px 14px; font-weight: 700; font-size: 13px;
+    border-bottom: 2px solid #E8EAF6;
+    background: #E8EAF6; color: #1A237E;
+    display: flex; align-items: center; gap: 8px; flex-shrink: 0;
+}
+.panel-body { flex: 1; overflow-y: auto; padding: 8px; }
+
+/* 패널 너비 */
+.panel-menu   { width: 260px; border-right: 1px solid #E0E0E0; }
+.panel-qa     { width: 340px; border-right: 1px solid #E0E0E0; }
+.panel-detail { flex: 1; }
+
+/* 검색/필터 바 */
+.filter-bar {
+    padding: 6px 8px; border-bottom: 1px solid #EEE;
+    display: flex; flex-direction: column; gap: 5px; flex-shrink: 0;
+}
+.filter-row { display: flex; gap: 5px; }
+input[type=text], select {
+    flex: 1; padding: 5px 8px; border: 1px solid #CCC;
+    border-radius: 4px; font-size: 12px; font-family: inherit;
+}
+input[type=text]:focus, select:focus { outline: none; border-color: #5C6BC0; }
+.btn {
+    padding: 5px 12px; border: none; border-radius: 4px;
+    cursor: pointer; font-size: 12px; font-family: inherit; font-weight: 600;
+}
+.btn-primary  { background: #3F51B5; color: #fff; }
+.btn-primary:hover  { background: #303F9F; }
+.btn-success  { background: #43A047; color: #fff; }
+.btn-success:hover  { background: #2E7D32; }
+.btn-danger   { background: #E53935; color: #fff; }
+.btn-danger:hover   { background: #B71C1C; }
+.btn-ghost    { background: #EEE; color: #555; }
+.btn-ghost:hover    { background: #DDD; }
+.btn-sm { padding: 3px 8px; font-size: 11px; }
+
+/* 메뉴 트리 */
+.menu-group { margin-bottom: 4px; }
+.menu-group-header {
+    display: flex; align-items: center; gap: 5px;
+    padding: 5px 8px; border-radius: 4px;
+    cursor: pointer; font-weight: 700; color: #1A237E;
+    background: #EEF; user-select: none;
+}
+.menu-group-header:hover { background: #C5CAE9; }
+.menu-sub-header {
+    display: flex; align-items: center; gap: 4px;
+    padding: 4px 8px 4px 20px; border-radius: 4px;
+    cursor: pointer; color: #333; font-weight: 600;
+    user-select: none;
+}
+.menu-sub-header:hover { background: #F5F5F5; }
+.menu-item-row {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 4px 8px 4px 32px; border-radius: 4px;
+    cursor: pointer; color: #444;
+}
+.menu-item-row:hover { background: #E8EAF6; }
+.menu-item-row.active { background: #C5CAE9; font-weight: 700; color: #1A237E; }
+.qa-badge {
+    font-size: 10px; padding: 1px 6px; border-radius: 8px;
+    font-weight: 700; min-width: 20px; text-align: center;
+}
+.qa-badge.has-qa  { background: #C8E6C9; color: #1B5E20; }
+.qa-badge.no-qa   { background: #EEE;     color: #999; }
+.collapse-icon { font-size: 9px; color: #999; margin-left: auto; }
+
+/* QA 카드 */
+.qa-card {
+    padding: 8px 10px; border: 1px solid #E0E0E0;
+    border-radius: 6px; margin-bottom: 6px;
+    cursor: pointer; transition: border-color 0.1s;
+    background: #fff;
+}
+.qa-card:hover    { border-color: #5C6BC0; background: #F8F9FF; }
+.qa-card.active   { border-color: #3F51B5; background: #EEF; }
+.qa-card.linked   { border-left: 3px solid #43A047; }
+.qa-card.unlinked { border-left: 3px solid #EEE; }
+.qa-q {
+    font-weight: 600; color: #222; margin-bottom: 4px;
+    overflow: hidden; display: -webkit-box;
+    -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+    line-height: 1.4;
+}
+.qa-meta { font-size: 11px; color: #888; display: flex; gap: 8px; flex-wrap: wrap; }
+.qa-source { padding: 1px 6px; border-radius: 8px; background: #FFF9C4; color: #5D4037; font-weight: 600; }
+.qa-link-count { color: #1B5E20; font-weight: 600; }
+
+/* 상세 패널 */
+.detail-section {
+    border: 1px solid #E0E0E0; border-radius: 6px;
+    margin-bottom: 10px; overflow: hidden;
+}
+.detail-section-header {
+    padding: 7px 12px; background: #F5F5F5;
+    font-weight: 700; font-size: 12px; color: #555;
+    border-bottom: 1px solid #E0E0E0;
+    display: flex; justify-content: space-between; align-items: center;
+}
+.detail-section-body { padding: 10px 12px; }
+.detail-q { font-weight: 700; color: #111; margin-bottom: 6px; line-height: 1.5; }
+.detail-a { color: #333; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
+.tag-list { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.tag { padding: 2px 8px; background: #EDE7F6; color: #4A148C; border-radius: 10px; font-size: 11px; }
+
+/* 연결된 메뉴 목록 */
+.linked-menu-item {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 5px 8px; border: 1px solid #E0E0E0; border-radius: 4px;
+    margin-bottom: 4px; background: #F1F8E9;
+}
+.linked-menu-path { color: #2E7D32; font-weight: 600; font-size: 12px; }
+
+/* 검색 결과 (연결 추가용) */
+.search-result-item {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 5px 8px; border: 1px solid #E0E0E0; border-radius: 4px;
+    margin-bottom: 4px; cursor: default;
+}
+.search-result-item:hover { background: #F5F5F5; }
+.search-menu-path { font-weight: 600; color: #333; font-size: 12px; }
+
+/* 빈 상태 */
+.empty { text-align: center; color: #999; padding: 30px 10px; font-size: 12px; }
+.loading-text { text-align: center; color: #999; padding: 20px; font-size: 12px; }
+
+/* 탭 필터 */
+.tab-filter { display: flex; gap: 4px; padding: 6px 8px; border-bottom: 1px solid #EEE; flex-shrink: 0; }
+.tab-btn {
+    padding: 4px 10px; border-radius: 12px; border: 1px solid #DDD;
+    background: #fff; cursor: pointer; font-size: 11px; font-weight: 600; color: #555;
+}
+.tab-btn.active { background: #3F51B5; color: #fff; border-color: #3F51B5; }
+.tab-btn:hover:not(.active) { background: #EEE; }
+
+/* 검토 뷰 */
+.review-bar {
+    padding: 6px 8px; border-bottom: 1px solid #EEE;
+    display: flex; gap: 6px; align-items: center; flex-shrink: 0;
+    background: #FFFDE7;
+}
+.review-stats {
+    font-size: 11px; color: #555; margin-left: auto;
+}
+.review-card {
+    padding: 8px 10px; border: 1px solid #E0E0E0;
+    border-radius: 6px; margin-bottom: 6px; background: #fff;
+}
+.review-card.suspicious { border-left: 3px solid #E53935; background: #FFF8F8; }
+.review-card.clean      { border-left: 3px solid #43A047; }
+.review-q {
+    font-weight: 600; color: #222; margin-bottom: 5px;
+    overflow: hidden; display: -webkit-box;
+    -webkit-line-clamp: 2; -webkit-box-orient: vertical; line-height: 1.4;
+}
+.review-menus { display: flex; flex-direction: column; gap: 3px; margin-top: 4px; }
+.review-menu-row {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 3px 8px; border-radius: 4px; background: #F1F8E9;
+    font-size: 11px;
+}
+.review-menu-row.warn { background: #FFEBEE; }
+.review-menu-path { font-weight: 600; color: #333; flex: 1; }
+.review-menu-path.warn-text { color: #C62828; }
+.warn-icon { margin-right: 4px; font-size: 11px; }
+
+/* 스크롤바 */
+::-webkit-scrollbar { width: 5px; }
+::-webkit-scrollbar-thumb { background: #CCC; border-radius: 4px; }
+</style>
+</head>
+<body>
+
+<div class="header">
+    <h1>📋 XPERP QA-메뉴 연결 관리</h1>
+    <a href="/">← 챗봇으로</a>
+    <div class="stat-chips">
+        <span class="stat-chip" id="statTotal">QA: -</span>
+        <span class="stat-chip" id="statLinked">연결됨: -</span>
+        <span class="stat-chip" id="statMenus">메뉴: -</span>
+    </div>
+</div>
+
+<div class="main">
+
+    <!-- 패널1: 메뉴 트리 -->
+    <div class="panel panel-menu">
+        <div class="panel-header">
+            🗂️ 메뉴 목록
+        </div>
+        <div class="filter-bar">
+            <div class="filter-row">
+                <input type="text" id="menuSearch" placeholder="메뉴 검색..." oninput="filterMenuTree()">
+            </div>
+        </div>
+        <div class="panel-body" id="menuTree">
+            <div class="loading-text">로딩 중...</div>
+        </div>
+    </div>
+
+    <!-- 패널2: QA 목록 -->
+    <div class="panel panel-qa">
+        <div class="panel-header">
+            📄 QA 목록
+            <span id="qaListTitle" style="font-weight:400; font-size:11px; color:#666; margin-left:4px;"></span>
+        </div>
+        <div class="tab-filter">
+            <button class="tab-btn active" onclick="setQaTab('linked')" id="tab-linked">연결됨</button>
+            <button class="tab-btn" onclick="setQaTab('unlinked')" id="tab-unlinked">미연결</button>
+            <button class="tab-btn" onclick="setQaTab('search')" id="tab-search">검색</button>
+            <button class="tab-btn" onclick="setQaTab('review')" id="tab-review" style="background:#FFF9C4;border-color:#F9A825;color:#5D4037">⚠️ 검토</button>
+        </div>
+        <div class="filter-bar" id="qaFilterBar">
+            <div class="filter-row">
+                <input type="text" id="qaSearch" placeholder="질문/답변 검색...">
+                <select id="qaSource">
+                    <option value="">전체 소스</option>
+                </select>
+                <button class="btn btn-primary btn-sm" onclick="searchQa()">검색</button>
+            </div>
+        </div>
+        <div class="review-bar" id="reviewBar" style="display:none">
+            <select id="reviewSource" onchange="loadReview()" style="max-width:160px">
+                <option value="">소스 선택...</option>
+            </select>
+            <label style="font-size:11px;color:#555;display:flex;align-items:center;gap:4px">
+                <input type="checkbox" id="reviewSuspiciousOnly" onchange="renderReviewList()">
+                의심만
+            </label>
+            <span class="review-stats" id="reviewStats"></span>
+        </div>
+        <div class="panel-body" id="qaList">
+            <div class="empty">← 메뉴를 선택하세요</div>
+        </div>
+    </div>
+
+    <!-- 패널3: QA 상세 + 연결 관리 -->
+    <div class="panel panel-detail">
+        <div class="panel-header">🔍 QA 상세 / 연결 관리</div>
+        <div class="panel-body" id="detailPanel">
+            <div class="empty">← QA를 선택하세요</div>
+        </div>
+    </div>
+
+</div>
+
+<script>
+let allMenuItems = [];   // 전체 MenuItem
+let selectedMenuItemId = null;
+let selectedQaId = null;
+let qaTab = 'linked';    // 'linked' | 'unlinked' | 'search' | 'review'
+let reviewData = [];     // 검토 탭 데이터 캐시
+
+// ─────────────────────────────────────────
+// 초기화
+// ─────────────────────────────────────────
+async function init() {
+    await Promise.all([loadMenuTree(), loadSources(), loadStats()]);
+    populateReviewSourceSelect();
+}
+
+async function loadStats() {
+    try {
+        const [menuRes, qaRes] = await Promise.all([
+            fetch('/admin/menus').then(r => r.json()),
+            fetch('/admin/qa?limit=1').then(r => r.json())
+        ]);
+        const total = menuRes.items?.length || 0;
+        const linked = menuRes.items?.filter(m => m.qa_count > 0).length || 0;
+        document.getElementById('statMenus').textContent = `메뉴: ${total}개`;
+        document.getElementById('statLinked').textContent = `QA연결: ${linked}개 메뉴`;
+    } catch(e) {}
+}
+
+async function loadSources() {
+    try {
+        const res = await fetch('/admin/sources');
+        const data = await res.json();
+        const sel = document.getElementById('qaSource');
+        data.items.forEach(s => {
+            const opt = document.createElement('option');
+            opt.value = s.source;
+            opt.textContent = `${s.source} (${s.count})`;
+            sel.appendChild(opt);
+        });
+    } catch(e) {}
+}
+
+// ─────────────────────────────────────────
+// 메뉴 트리
+// ─────────────────────────────────────────
+async function loadMenuTree() {
+    try {
+        const res = await fetch('/admin/menus');
+        const data = await res.json();
+        allMenuItems = data.items || [];
+        renderMenuTree(allMenuItems);
+    } catch(e) {
+        document.getElementById('menuTree').innerHTML = '<div class="empty">로드 실패</div>';
+    }
+}
+
+function filterMenuTree() {
+    const q = document.getElementById('menuSearch').value.trim().toLowerCase();
+    const filtered = q
+        ? allMenuItems.filter(m => m.name.toLowerCase().includes(q) ||
+              (m.menu_path || '').toLowerCase().includes(q))
+        : allMenuItems;
+    renderMenuTree(filtered);
+}
+
+function renderMenuTree(items) {
+    const container = document.getElementById('menuTree');
+    if (!items.length) { container.innerHTML = '<div class="empty">검색 결과 없음</div>'; return; }
+
+    // 계층 구조 빌드
+    const tree = {};  // main_menu → sub_menu → [items]
+    items.forEach(m => {
+        const main = m.main_menu || '(없음)';
+        const sub  = m.sub_menu  || '(직속)';
+        if (!tree[main]) tree[main] = {};
+        if (!tree[main][sub]) tree[main][sub] = [];
+        tree[main][sub].push(m);
+    });
+
+    let html = '';
+    for (const main of Object.keys(tree).sort()) {
+        const mainId = `main-${main}`;
+        const subGroups = tree[main];
+        const totalQa = Object.values(subGroups).flat().reduce((s, m) => s + (m.qa_count || 0), 0);
+
+        html += `<div class="menu-group">
+            <div class="menu-group-header" onclick="toggleGroup('${mainId}')">
+                📁 ${main}
+                <span class="qa-badge ${totalQa > 0 ? 'has-qa' : 'no-qa'}">${totalQa}</span>
+                <span class="collapse-icon" id="icon-${mainId}">▼</span>
+            </div>
+            <div id="${mainId}">`;
+
+        for (const sub of Object.keys(subGroups).sort()) {
+            const subItems = subGroups[sub];
+            const subQa = subItems.reduce((s, m) => s + (m.qa_count || 0), 0);
+
+            if (sub === '(직속)') {
+                subItems.forEach(m => {
+                    html += menuItemRow(m);
+                });
+            } else {
+                const subId = `sub-${main}-${sub}`.replace(/\s/g, '_');
+                html += `
+                <div class="menu-sub-header" onclick="toggleGroup('${subId}')">
+                    📂 ${sub}
+                    <span class="qa-badge ${subQa > 0 ? 'has-qa' : 'no-qa'}">${subQa}</span>
+                    <span class="collapse-icon" id="icon-${subId}">▼</span>
+                </div>
+                <div id="${subId}">`;
+                subItems.forEach(m => { html += menuItemRow(m); });
+                html += `</div>`;
+            }
+        }
+        html += `</div></div>`;
+    }
+    container.innerHTML = html;
+}
+
+function menuItemRow(m) {
+    const active = m.id === selectedMenuItemId ? ' active' : '';
+    return `<div class="menu-item-row${active}" id="menu-row-${m.id}" onclick="selectMenuItem('${m.id}', '${escHtml(m.name)}', '${escHtml(m.menu_path || '')}')">
+        📄 ${m.name}
+        <span class="qa-badge ${m.qa_count > 0 ? 'has-qa' : 'no-qa'}">${m.qa_count}</span>
+    </div>`;
+}
+
+function toggleGroup(id) {
+    const el = document.getElementById(id);
+    const icon = document.getElementById('icon-' + id);
+    if (!el) return;
+    const hidden = el.style.display === 'none';
+    el.style.display = hidden ? '' : 'none';
+    if (icon) icon.textContent = hidden ? '▼' : '▶';
+}
+
+function selectMenuItem(id, name, path) {
+    // 이전 active 해제
+    if (selectedMenuItemId) {
+        const prev = document.getElementById(`menu-row-${selectedMenuItemId}`);
+        if (prev) prev.classList.remove('active');
+    }
+    selectedMenuItemId = id;
+    const curr = document.getElementById(`menu-row-${id}`);
+    if (curr) curr.classList.add('active');
+
+    document.getElementById('qaListTitle').textContent = name;
+    loadQaList();
+}
+
+// ─────────────────────────────────────────
+// QA 목록
+// ─────────────────────────────────────────
+function setQaTab(tab) {
+    qaTab = tab;
+    ['linked', 'unlinked', 'search', 'review'].forEach(t => {
+        const el = document.getElementById(`tab-${t}`);
+        if (el) el.classList.toggle('active', t === tab);
+    });
+    document.getElementById('qaFilterBar').style.display = tab === 'search' ? '' : 'none';
+    document.getElementById('reviewBar').style.display  = tab === 'review' ? '' : 'none';
+    if (tab === 'review') {
+        renderReviewList();
+    } else {
+        loadQaList();
+    }
+}
+
+async function loadQaList() {
+    const listEl = document.getElementById('qaList');
+    listEl.innerHTML = '<div class="loading-text">로딩 중...</div>';
+
+    try {
+        let url;
+        if (qaTab === 'linked' && selectedMenuItemId) {
+            url = `/admin/qa?menuitem_id=${encodeURIComponent(selectedMenuItemId)}&limit=100`;
+        } else if (qaTab === 'unlinked') {
+            const src = document.getElementById('qaSource').value;
+            url = `/admin/qa?unlinked=true&limit=100${src ? '&source=' + encodeURIComponent(src) : ''}`;
+        } else if (qaTab === 'search') {
+            return; // 검색 버튼 클릭 시 실행
+        } else {
+            listEl.innerHTML = '<div class="empty">← 메뉴를 선택하세요</div>';
+            return;
+        }
+
+        const res = await fetch(url);
+        const data = await res.json();
+        renderQaList(data.items || []);
+    } catch(e) {
+        listEl.innerHTML = '<div class="empty">로드 실패</div>';
+    }
+}
+
+async function searchQa() {
+    const q = document.getElementById('qaSearch').value.trim();
+    const src = document.getElementById('qaSource').value;
+    if (!q && !src) { alert('검색어 또는 소스를 입력하세요'); return; }
+
+    const listEl = document.getElementById('qaList');
+    listEl.innerHTML = '<div class="loading-text">검색 중...</div>';
+    try {
+        const params = new URLSearchParams({ limit: 50 });
+        if (q)   params.set('q', q);
+        if (src) params.set('source', src);
+        const res = await fetch('/admin/qa?' + params.toString());
+        const data = await res.json();
+        renderQaList(data.items || []);
+    } catch(e) {
+        listEl.innerHTML = '<div class="empty">검색 실패</div>';
+    }
+}
+
+function renderQaList(items) {
+    const listEl = document.getElementById('qaList');
+    if (!items.length) { listEl.innerHTML = '<div class="empty">QA가 없습니다</div>'; return; }
+
+    listEl.innerHTML = items.map(qa => {
+        const active = qa.id === selectedQaId ? ' active' : '';
+        return `<div class="qa-card${active}" id="qa-card-${qa.id}" onclick="selectQa('${escHtml(qa.id)}')">
+            <div class="qa-q">${escHtml(qa.question)}</div>
+            <div class="qa-meta">
+                <span class="qa-source">${qa.source || '-'}</span>
+                <span>${qa.tags?.slice(0,3).map(t => '#'+t).join(' ') || ''}</span>
+            </div>
+        </div>`;
+    }).join('');
+}
+
+// ─────────────────────────────────────────
+// QA 상세 + 연결 관리
+// ─────────────────────────────────────────
+async function selectQa(qaId) {
+    if (selectedQaId) {
+        const prev = document.getElementById(`qa-card-${selectedQaId}`);
+        if (prev) prev.classList.remove('active');
+    }
+    selectedQaId = qaId;
+    const curr = document.getElementById(`qa-card-${qaId}`);
+    if (curr) curr.classList.add('active');
+
+    await renderDetail(qaId);
+}
+
+async function renderDetail(qaId) {
+    const panel = document.getElementById('detailPanel');
+    panel.innerHTML = '<div class="loading-text">로딩 중...</div>';
+
+    try {
+        // QA 상세 + 연결된 메뉴 목록 동시 조회
+        const [qa, menuRes] = await Promise.all([
+            fetch(`/admin/qa/${encodeURIComponent(qaId)}/detail`).then(r => {
+                if (!r.ok) throw new Error('QA 조회 실패');
+                return r.json();
+            }),
+            fetch(`/admin/qa/${encodeURIComponent(qaId)}/menus`).then(r => r.json())
+        ]);
+
+        const linkedMenus = menuRes.items || [];
+
+        panel.innerHTML = `
+        <!-- QA 내용 -->
+        <div class="detail-section">
+            <div class="detail-section-header">
+                📌 ${escHtml(qa.id)}
+                <span style="font-size:11px;color:#999">${qa.source || ''}</span>
+            </div>
+            <div class="detail-section-body">
+                <div class="detail-q">Q. ${escHtml(qa.question)}</div>
+                <div class="detail-a">A. ${escHtml(qa.answer)}</div>
+                <div class="tag-list">${(qa.tags||[]).map(t => `<span class="tag">#${escHtml(t)}</span>`).join('')}</div>
+            </div>
+        </div>
+
+        <!-- 연결된 메뉴 -->
+        <div class="detail-section">
+            <div class="detail-section-header">
+                🔗 연결된 메뉴 <span style="color:#2E7D32">(${linkedMenus.length}개)</span>
+            </div>
+            <div class="detail-section-body" id="linkedMenuList">
+                ${linkedMenus.length === 0
+                    ? '<div style="color:#999;font-size:12px">연결된 메뉴 없음</div>'
+                    : linkedMenus.map(m => `
+                        <div class="linked-menu-item">
+                            <span class="linked-menu-path">📄 ${escHtml(m.menu_path || m.name)}</span>
+                            <button class="btn btn-danger btn-sm"
+                                onclick="unlinkMenu('${escHtml(qaId)}', '${escHtml(m.id)}', this)">연결 해제</button>
+                        </div>`).join('')}
+            </div>
+        </div>
+
+        <!-- 메뉴 연결 추가 -->
+        <div class="detail-section">
+            <div class="detail-section-header">➕ 메뉴 연결 추가</div>
+            <div class="detail-section-body">
+                <div class="filter-row" style="margin-bottom:8px">
+                    <input type="text" id="menuLinkSearch" placeholder="메뉴 이름 검색..." onkeydown="if(event.key==='Enter') searchMenuForLink()">
+                    <button class="btn btn-ghost btn-sm" onclick="searchMenuForLink()">검색</button>
+                </div>
+                ${selectedMenuItemId ? `
+                <div style="margin-bottom:6px;font-size:12px;color:#555">
+                    현재 선택된 메뉴:
+                    <span style="font-weight:700;color:#1A237E">${escHtml(allMenuItems.find(m=>m.id===selectedMenuItemId)?.menu_path || selectedMenuItemId)}</span>
+                    <button class="btn btn-success btn-sm" style="margin-left:6px"
+                        onclick="linkCurrentMenu('${escHtml(qaId)}')">연결 추가</button>
+                </div>` : ''}
+                <div id="menuSearchResults"></div>
+            </div>
+        </div>`;
+    } catch(e) {
+        panel.innerHTML = '<div class="empty">로드 실패</div>';
+    }
+}
+
+function searchMenuForLink() {
+    const q = document.getElementById('menuLinkSearch').value.trim().toLowerCase();
+    const results = document.getElementById('menuSearchResults');
+    if (!q) { results.innerHTML = ''; return; }
+
+    const matched = allMenuItems.filter(m =>
+        m.name.toLowerCase().includes(q) ||
+        (m.menu_path || '').toLowerCase().includes(q)
+    ).slice(0, 10);
+
+    if (!matched.length) { results.innerHTML = '<div style="color:#999;font-size:12px">검색 결과 없음</div>'; return; }
+
+    results.innerHTML = matched.map(m => `
+        <div class="search-result-item">
+            <span class="search-menu-path">📄 ${escHtml(m.menu_path || m.name)}</span>
+            <button class="btn btn-success btn-sm"
+                onclick="linkMenu('${escHtml(selectedQaId)}', '${escHtml(m.id)}', this)">연결</button>
+        </div>`).join('');
+}
+
+async function linkCurrentMenu(qaId) {
+    if (!selectedMenuItemId) return;
+    await linkMenu(qaId, selectedMenuItemId, null);
+}
+
+async function linkMenu(qaId, menuItemId, btn) {
+    if (!qaId) { alert('QA를 먼저 선택하세요'); return; }
+    if (btn) { btn.disabled = true; btn.textContent = '...'; }
+    try {
+        const res = await fetch('/admin/qa-link', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ qa_id: qaId, menuitem_id: menuItemId })
+        });
+        if (!res.ok) throw new Error(await res.text());
+        await renderDetail(qaId);
+        updateMenuBadge(menuItemId, 1);
+    } catch(e) {
+        alert('연결 실패: ' + e.message);
+        if (btn) { btn.disabled = false; btn.textContent = '연결'; }
+    }
+}
+
+async function unlinkMenu(qaId, menuItemId, btn) {
+    if (!confirm('이 연결을 해제하시겠습니까?')) return;
+    btn.disabled = true;
+    try {
+        const res = await fetch('/admin/qa-link', {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ qa_id: qaId, menuitem_id: menuItemId })
+        });
+        if (!res.ok) throw new Error(await res.text());
+        await renderDetail(qaId);
+        updateMenuBadge(menuItemId, -1);
+    } catch(e) {
+        alert('해제 실패: ' + e.message);
+        btn.disabled = false;
+    }
+}
+
+function updateMenuBadge(menuItemId, delta) {
+    const item = allMenuItems.find(m => m.id === menuItemId);
+    if (item) {
+        item.qa_count = Math.max(0, (item.qa_count || 0) + delta);
+        const row = document.getElementById(`menu-row-${menuItemId}`);
+        if (row) {
+            const badge = row.querySelector('.qa-badge');
+            if (badge) {
+                badge.textContent = item.qa_count;
+                badge.className = `qa-badge ${item.qa_count > 0 ? 'has-qa' : 'no-qa'}`;
+            }
+        }
+    }
+}
+
+// ─────────────────────────────────────────
+// 검토 탭 (소스별 오탐 확인)
+// ─────────────────────────────────────────
+function populateReviewSourceSelect() {
+    // loadSources()가 완료된 후 qaSource 옵션을 복사
+    const src = document.getElementById('qaSource');
+    const rev = document.getElementById('reviewSource');
+    // qaSource 옵션이 이미 로드됐으면 복사, 없으면 sources API 재활용
+    setTimeout(() => {
+        Array.from(src.options).forEach(opt => {
+            if (opt.value) {
+                const o = document.createElement('option');
+                o.value = opt.value;
+                o.textContent = opt.textContent;
+                rev.appendChild(o);
+            }
+        });
+        // 투표qna 기본 선택
+        const votingOpt = Array.from(rev.options).find(o => o.value === '투표qna');
+        if (votingOpt) { rev.value = '투표qna'; loadReview(); }
+    }, 800);
+}
+
+async function loadReview() {
+    const source = document.getElementById('reviewSource').value;
+    const listEl = document.getElementById('qaList');
+    if (!source) {
+        reviewData = [];
+        listEl.innerHTML = '<div class="empty">소스를 선택하세요</div>';
+        document.getElementById('reviewStats').textContent = '';
+        return;
+    }
+    listEl.innerHTML = '<div class="loading-text">불러오는 중...</div>';
+    try {
+        const res = await fetch(`/admin/review?source=${encodeURIComponent(source)}&limit=300`);
+        const data = await res.json();
+        reviewData = data.items || [];
+        renderReviewList();
+    } catch(e) {
+        listEl.innerHTML = '<div class="empty">로드 실패</div>';
+    }
+}
+
+function isSuspicious(qa) {
+    // 소스에 '투표'가 포함되는데 연결된 메뉴 경로에 '전자투표'/'투표'가 없으면 의심
+    const srcHasVote = (qa.source || '').includes('투표') || qa.source === 'qna';
+    return qa.menus.some(m => {
+        const path = (m.path || m.main || '').toLowerCase();
+        if (srcHasVote) {
+            return !path.includes('전자투표') && !path.includes('투표');
+        }
+        return false;
+    });
+}
+
+function renderReviewList() {
+    const listEl = document.getElementById('qaList');
+    const onlySuspicious = document.getElementById('reviewSuspiciousOnly')?.checked;
+
+    let items = reviewData;
+    if (onlySuspicious) {
+        items = items.filter(qa => isSuspicious(qa));
+    }
+
+    const suspCount = reviewData.filter(qa => isSuspicious(qa)).length;
+    document.getElementById('reviewStats').textContent =
+        `연결 ${reviewData.length}개 / ⚠️ 의심 ${suspCount}개`;
+
+    if (!items.length) {
+        listEl.innerHTML = `<div class="empty">${onlySuspicious ? '의심 항목 없음 ✅' : '데이터 없음'}</div>`;
+        return;
+    }
+
+    listEl.innerHTML = items.map(qa => {
+        const susp = isSuspicious(qa);
+        const menuRows = qa.menus.map(m => {
+            const path = (m.path || m.name || '');
+            const srcVote = (qa.source || '').includes('투표') || qa.source === 'qna';
+            const warn = srcVote && !path.includes('전자투표') && !path.includes('투표');
+            return `<div class="review-menu-row${warn ? ' warn' : ''}">
+                ${warn ? '<span class="warn-icon">⚠️</span>' : '<span class="warn-icon">✅</span>'}
+                <span class="review-menu-path${warn ? ' warn-text' : ''}">${escHtml(path)}</span>
+                <button class="btn btn-danger btn-sm"
+                    onclick="reviewUnlink('${escHtml(qa.id)}','${escHtml(m.id)}',this)">해제</button>
+            </div>`;
+        }).join('');
+
+        return `<div class="review-card${susp ? ' suspicious' : ' clean'}" id="review-qa-${qa.id}">
+            <div class="review-q">${susp ? '⚠️ ' : ''}${escHtml(qa.question)}</div>
+            <div class="qa-meta" style="margin-bottom:4px">
+                <span class="qa-source">${escHtml(qa.source || '')}</span>
+                <span style="font-size:10px;color:#999">${escHtml(qa.id)}</span>
+            </div>
+            <div class="review-menus">${menuRows}</div>
+        </div>`;
+    }).join('');
+}
+
+async function reviewUnlink(qaId, menuItemId, btn) {
+    if (!confirm('이 연결을 해제하시겠습니까?')) return;
+    btn.disabled = true;
+    try {
+        const res = await fetch('/admin/qa-link', {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ qa_id: qaId, menuitem_id: menuItemId })
+        });
+        if (!res.ok) throw new Error(await res.text());
+        // 로컬 캐시 업데이트
+        const qa = reviewData.find(q => q.id === qaId);
+        if (qa) {
+            qa.menus = qa.menus.filter(m => m.id !== menuItemId);
+            if (qa.menus.length === 0) {
+                reviewData = reviewData.filter(q => q.id !== qaId);
+            }
+        }
+        renderReviewList();
+        updateMenuBadge(menuItemId, -1);
+    } catch(e) {
+        alert('해제 실패: ' + e.message);
+        btn.disabled = false;
+    }
+}
+
+function escHtml(str) {
+    if (!str) return '';
+    return String(str)
+        .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+        .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+// 초기화
+init();
+</script>
+</body>
+</html>
