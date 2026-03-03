@@ -153,6 +153,10 @@ def initialize_retrievers():
     WITH menuItem, score, subMenu, menu, menu2,
          [qa IN collect(DISTINCT qa) WHERE qa IS NOT NULL
           | 'Q: ' + qa.question + '\nA: ' + qa.answer][0..3] AS qa_texts
+    OPTIONAL MATCH (menuItem)-[relEdge:RELATED_MENU]-(relMenu:MenuItem)
+    WITH menuItem, score, subMenu, menu, menu2, qa_texts,
+         [r IN collect(DISTINCT {name: relMenu.name, path: relMenu.menu_path, type: relEdge.type})
+          WHERE r.name IS NOT NULL] AS related_menus
     RETURN
         menuItem.name AS menu_item_name,
         menuItem.description AS description,
@@ -162,7 +166,14 @@ def initialize_retrievers():
         score AS similarity_score,
         CASE WHEN size(qa_texts) > 0
              THEN reduce(s='[관련 QA 사례]\n', t IN qa_texts | s + t + '\n\n')
-             ELSE '' END AS related_qa
+             ELSE '' END AS related_qa,
+        CASE WHEN size(related_menus) > 0
+             THEN reduce(s='[관련 메뉴]\n', r IN related_menus |
+                  s + CASE r.type
+                      WHEN '선행업무' THEN '→ 선행업무: '
+                      WHEN '후속업무' THEN '← 후속업무: '
+                      ELSE '↔ 관련메뉴: ' END + r.path + '\n')
+             ELSE '' END AS related_menus_text
     """
 
     vector_cypher_retriever = VectorCypherRetriever(
@@ -266,8 +277,12 @@ def initialize_retrievers():
 2. 검색된 정보가 QA(질문/답변) 사례인 경우: 답변 내용을 중심으로 명확하게 안내하세요.
 3. 메뉴 설명과 함께 [관련 QA 사례]가 포함된 경우: QA 사례를 활용하여 더 구체적인 안내를 제공하세요.
 4. QA에 [관련 메뉴] 경로가 포함된 경우: 해당 메뉴 경로를 답변에 포함하세요.
-5. 여러 관련 항목이 있다면 모두 안내하세요.
-6. 검색 결과에 없는 내용은 추측하지 마세요.
+5. [관련 메뉴] 섹션이 있는 경우 반드시 함께 안내하세요:
+   - '→ 선행업무'는 이 메뉴를 사용하기 전에 먼저 처리해야 하는 메뉴입니다.
+   - '← 후속업무'는 이 메뉴 처리 후 이어서 진행하는 메뉴입니다.
+   - '↔ 관련메뉴'는 함께 참고하면 유용한 메뉴입니다.
+6. 여러 관련 항목이 있다면 모두 안내하세요.
+7. 검색 결과에 없는 내용은 추측하지 마세요.
 
 답변:""",
         expected_inputs=["context", "query_text"]
@@ -323,14 +338,15 @@ async def admin():
 # ─────────────────────────────────────────
 
 @app.get("/admin/menus")
-async def admin_get_menus():
+async def admin_get_menus(q: str = Query("", description="메뉴 검색어")):
     """메뉴 트리 + 각 MenuItem의 연결 QA 수 반환"""
     try:
         with driver.session() as session:
             result = session.run("""
                 MATCH (m:MenuItem)
-                OPTIONAL MATCH (q:QA)-[:IN_MENU]->(m)
-                WITH m, count(q) AS qa_count
+                WHERE $q = '' OR m.name CONTAINS $q OR m.menu_path CONTAINS $q
+                OPTIONAL MATCH (qa:QA)-[:IN_MENU]->(m)
+                WITH m, count(qa) AS qa_count
                 OPTIONAL MATCH (s:SubMenu)-[:HAS_ITEM]->(m)
                 OPTIONAL MATCH (menu:Menu)-[:HAS_SUBMENU]->(s)
                 OPTIONAL MATCH (menu2:Menu)-[:HAS_ITEM]->(m)
@@ -342,7 +358,7 @@ async def admin_get_menus():
                     m.sub_menu      AS sub_menu,
                     qa_count
                 ORDER BY m.main_menu, m.sub_menu, m.name
-            """)
+            """, q=q)
             items = [dict(r) for r in result]
         return {"items": items}
     except Exception as e:
@@ -459,6 +475,13 @@ class LinkRequest(BaseModel):
     menuitem_id: str
 
 
+class MenuRelationRequest(BaseModel):
+    source_id: str
+    target_id: str
+    rel_type: str   # "관련메뉴" | "선행업무" | "후속업무"
+    memo: str = ""
+
+
 @app.post("/admin/qa-link")
 async def admin_create_link(req: LinkRequest):
     """QA ↔ MenuItem 연결 생성"""
@@ -489,6 +512,63 @@ async def admin_delete_link(req: LinkRequest):
                 MATCH (q:QA {id: $qa_id})-[r:IN_MENU]->(m:MenuItem {id: $mid})
                 DELETE r
             """, qa_id=req.qa_id, mid=req.menuitem_id)
+        return {"status": "ok"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/admin/menu-relations")
+async def admin_get_menu_relations():
+    """MenuItem 간 RELATED_MENU 관계 목록 조회"""
+    try:
+        with driver.session() as session:
+            result = session.run("""
+                MATCH (a:MenuItem)-[r:RELATED_MENU]->(b:MenuItem)
+                RETURN
+                    a.id AS source_id, a.name AS source_name, a.menu_path AS source_path,
+                    r.type AS rel_type, r.memo AS memo,
+                    b.id AS target_id, b.name AS target_name, b.menu_path AS target_path
+                ORDER BY a.menu_path
+            """)
+            items = [dict(r) for r in result]
+        return {"items": items, "count": len(items)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/admin/menu-relation")
+async def admin_create_menu_relation(req: MenuRelationRequest):
+    """MenuItem ↔ MenuItem 관계 생성"""
+    if req.source_id == req.target_id:
+        raise HTTPException(status_code=400, detail="소스와 대상 메뉴가 동일합니다")
+    try:
+        with driver.session() as session:
+            result = session.run("""
+                MATCH (a:MenuItem {id: $source_id}), (b:MenuItem {id: $target_id})
+                MERGE (a)-[r:RELATED_MENU {type: $rel_type}]->(b)
+                SET r.memo = $memo, r.created_at = datetime()
+                RETURN a.menu_path AS source_path, b.menu_path AS target_path
+            """, source_id=req.source_id, target_id=req.target_id,
+                rel_type=req.rel_type, memo=req.memo)
+            row = result.single()
+            if not row:
+                raise HTTPException(status_code=404, detail="MenuItem을 찾을 수 없습니다")
+        return {"status": "ok", "source_path": row["source_path"], "target_path": row["target_path"]}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/admin/menu-relation")
+async def admin_delete_menu_relation(req: MenuRelationRequest):
+    """MenuItem ↔ MenuItem 관계 삭제"""
+    try:
+        with driver.session() as session:
+            session.run("""
+                MATCH (a:MenuItem {id: $source_id})-[r:RELATED_MENU {type: $rel_type}]->(b:MenuItem {id: $target_id})
+                DELETE r
+            """, source_id=req.source_id, target_id=req.target_id, rel_type=req.rel_type)
         return {"status": "ok"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
