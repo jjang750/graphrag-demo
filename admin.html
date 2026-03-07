@@ -452,12 +452,42 @@ input[type=text]:focus, select:focus { outline: none; border-color: #5C6BC0; }
     resize: vertical; outline: none; transition: border-color 0.2s;
 }
 .qa-edit-textarea:focus { border-color: #5C6BC0; }
-.qa-edit-tag-input {
-    width: 100%; border: 1px solid #BDBDBD; border-radius: 5px;
-    padding: 7px 8px; font-size: 12px; font-family: inherit;
-    outline: none; transition: border-color 0.2s;
+/* ── 칩 태그 입력 ── */
+.tag-input-wrap {
+    display: flex; flex-wrap: wrap; gap: 4px; align-items: center;
+    border: 1px solid #BDBDBD; border-radius: 5px; padding: 5px 8px;
+    background: #fff; cursor: text; transition: border-color 0.2s;
+    position: relative; min-height: 34px;
 }
-.qa-edit-tag-input:focus { border-color: #5C6BC0; }
+.tag-input-wrap.focus { border-color: #5C6BC0; }
+.tag-chip {
+    display: inline-flex; align-items: center; gap: 3px;
+    background: #E8EAF6; color: #283593; border-radius: 12px;
+    padding: 2px 8px 2px 10px; font-size: 12px; font-weight: 500;
+    white-space: nowrap; max-width: 200px; overflow: hidden; text-overflow: ellipsis;
+}
+.tag-chip.is-menu { background: #C8E6C9; color: #1B5E20; }
+.tag-chip-x {
+    cursor: pointer; font-size: 14px; color: #999; margin-left: 2px;
+    line-height: 1; font-weight: 700;
+}
+.tag-chip-x:hover { color: #C62828; }
+.tag-input-field {
+    border: none; outline: none; font-size: 12px; font-family: inherit;
+    flex: 1; min-width: 80px; padding: 2px 0; background: transparent;
+}
+.tag-autocomplete {
+    position: absolute; top: 100%; left: 0; right: 0; z-index: 100;
+    background: #fff; border: 1px solid #C5CAE9; border-top: none;
+    border-radius: 0 0 6px 6px; max-height: 180px; overflow-y: auto;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.12); display: none;
+}
+.tag-ac-item {
+    padding: 6px 12px; font-size: 12px; cursor: pointer;
+    display: flex; justify-content: space-between; align-items: center;
+}
+.tag-ac-item:hover, .tag-ac-item.active { background: #E8EAF6; }
+.tag-ac-item .ac-path { color: #999; font-size: 11px; margin-left: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 180px; }
 .qa-edit-actions {
     display: flex; gap: 8px; align-items: center; margin-top: 2px;
 }
@@ -1040,9 +1070,19 @@ async function renderDetail(qaId) {
                 <textarea class="qa-edit-textarea" id="editQuestion" rows="3">${escHtml(qa.question)}</textarea>
                 <div class="qa-edit-label" style="margin-top:10px">답변</div>
                 <textarea class="qa-edit-textarea" id="editAnswer" rows="6">${escHtml(qa.answer)}</textarea>
-                <div class="qa-edit-label" style="margin-top:10px">태그 <span style="font-weight:400;color:#999">(쉼표로 구분)</span></div>
-                <input class="qa-edit-tag-input" id="editTags" type="text"
-                    value="${escHtml((qa.tags||[]).join(', '))}">
+                <div class="qa-edit-label" style="margin-top:10px">태그 <span style="font-weight:400;color:#999">(메뉴명 자동완성 / Enter로 추가)</span></div>
+                <div class="tag-input-wrap" id="tagInputWrap" onclick="document.getElementById('tagInputField').focus()">
+                    ${(qa.tags||[]).map(t => {
+                        const isMenu = allMenuItems.some(m => m.name === t);
+                        return `<span class="tag-chip${isMenu ? ' is-menu' : ''}" data-tag="${escHtml(t)}">${escHtml(t)}<span class="tag-chip-x" onclick="event.stopPropagation();removeTagChip(this)">×</span></span>`;
+                    }).join('')}
+                    <input class="tag-input-field" id="tagInputField" type="text"
+                        placeholder="태그 입력..."
+                        oninput="onTagInput()" onkeydown="onTagKeydown(event)"
+                        onfocus="document.getElementById('tagInputWrap').classList.add('focus')"
+                        onblur="setTimeout(()=>{document.getElementById('tagInputWrap').classList.remove('focus');hideTagAC()},200)">
+                    <div class="tag-autocomplete" id="tagAutocomplete"></div>
+                </div>
                 <div class="qa-edit-actions" style="margin-top:12px">
                     <button class="btn btn-primary btn-sm" onclick="saveQaEdit('${escHtml(qaId)}')">💾 저장</button>
                     <button class="btn btn-ghost btn-sm" onclick="cancelQaEdit()">✕ 취소</button>
@@ -1108,13 +1148,122 @@ function cancelQaEdit() {
     document.getElementById('qaViewBody').style.display = 'block';
     document.getElementById('qaEditBody').style.display = 'none';
     document.getElementById('qaEditMsg').textContent = '';
+    hideTagAC();
+}
+
+// ─────────────────────────────────────────
+// 칩 태그 입력 + 메뉴 자동완성
+// ─────────────────────────────────────────
+let tagACIndex = -1;  // 자동완성 선택 인덱스
+
+function getTagChips() {
+    const wrap = document.getElementById('tagInputWrap');
+    if (!wrap) return [];
+    return Array.from(wrap.querySelectorAll('.tag-chip')).map(el => el.dataset.tag);
+}
+
+function addTagChip(text) {
+    const tag = text.trim();
+    if (!tag) return;
+    // 중복 방지
+    if (getTagChips().includes(tag)) return;
+
+    const isMenu = allMenuItems.some(m => m.name === tag);
+    const chip = document.createElement('span');
+    chip.className = 'tag-chip' + (isMenu ? ' is-menu' : '');
+    chip.dataset.tag = tag;
+    chip.innerHTML = `${escHtml(tag)}<span class="tag-chip-x" onclick="event.stopPropagation();removeTagChip(this)">×</span>`;
+
+    const input = document.getElementById('tagInputField');
+    input.parentNode.insertBefore(chip, input);
+    input.value = '';
+    hideTagAC();
+}
+
+function removeTagChip(xBtn) {
+    xBtn.parentElement.remove();
+}
+
+function onTagInput() {
+    const input = document.getElementById('tagInputField');
+    const q = input.value.trim().toLowerCase();
+    tagACIndex = -1;
+
+    if (q.length < 1) { hideTagAC(); return; }
+
+    const existing = getTagChips();
+    const matches = allMenuItems
+        .filter(m => m.name.toLowerCase().includes(q) && !existing.includes(m.name))
+        .slice(0, 8);
+
+    const acEl = document.getElementById('tagAutocomplete');
+    if (!matches.length) { hideTagAC(); return; }
+
+    acEl.innerHTML = matches.map((m, i) =>
+        `<div class="tag-ac-item" data-idx="${i}" onmousedown="addTagChip('${escHtml(m.name)}')">
+            <span>${highlightMatch(escHtml(m.name), q)}</span>
+            <span class="ac-path">${escHtml(m.menu_path || '')}</span>
+        </div>`
+    ).join('');
+    acEl.style.display = 'block';
+}
+
+function highlightMatch(text, q) {
+    const idx = text.toLowerCase().indexOf(q.toLowerCase());
+    if (idx < 0) return text;
+    return text.slice(0, idx) + '<b style="color:#1A237E">' + text.slice(idx, idx + q.length) + '</b>' + text.slice(idx + q.length);
+}
+
+function onTagKeydown(e) {
+    const acEl = document.getElementById('tagAutocomplete');
+    const items = acEl.querySelectorAll('.tag-ac-item');
+    const visible = acEl.style.display === 'block' && items.length > 0;
+
+    if (e.key === 'ArrowDown' && visible) {
+        e.preventDefault();
+        tagACIndex = Math.min(tagACIndex + 1, items.length - 1);
+        updateACHighlight(items);
+    } else if (e.key === 'ArrowUp' && visible) {
+        e.preventDefault();
+        tagACIndex = Math.max(tagACIndex - 1, 0);
+        updateACHighlight(items);
+    } else if (e.key === 'Enter') {
+        e.preventDefault();
+        if (visible && tagACIndex >= 0 && items[tagACIndex]) {
+            // 자동완성 선택
+            items[tagACIndex].dispatchEvent(new Event('mousedown'));
+        } else {
+            // 직접 입력한 텍스트를 칩으로
+            addTagChip(e.target.value);
+        }
+    } else if (e.key === ',' || e.key === 'Tab') {
+        const val = e.target.value.replace(',', '').trim();
+        if (val) {
+            e.preventDefault();
+            addTagChip(val);
+        }
+    } else if (e.key === 'Backspace' && !e.target.value) {
+        // 입력 비어있으면 마지막 칩 삭제
+        const chips = document.getElementById('tagInputWrap').querySelectorAll('.tag-chip');
+        if (chips.length) chips[chips.length - 1].remove();
+    }
+}
+
+function updateACHighlight(items) {
+    items.forEach((el, i) => el.classList.toggle('active', i === tagACIndex));
+    if (items[tagACIndex]) items[tagACIndex].scrollIntoView({ block: 'nearest' });
+}
+
+function hideTagAC() {
+    const acEl = document.getElementById('tagAutocomplete');
+    if (acEl) { acEl.style.display = 'none'; acEl.innerHTML = ''; }
+    tagACIndex = -1;
 }
 
 async function saveQaEdit(qaId) {
     const question = document.getElementById('editQuestion').value.trim();
     const answer   = document.getElementById('editAnswer').value.trim();
-    const tagsRaw  = document.getElementById('editTags').value;
-    const tags     = tagsRaw.split(',').map(t => t.trim()).filter(t => t.length > 0);
+    const tags     = getTagChips();
 
     if (!question) { setQaEditMsg('질문을 입력하세요', false); return; }
     if (!answer)   { setQaEditMsg('답변을 입력하세요', false); return; }
