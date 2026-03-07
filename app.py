@@ -1,10 +1,16 @@
+import io
+import json
 import os
 import re
+import time
+import traceback
+import zipfile
 from contextlib import asynccontextmanager
+from datetime import datetime
 from typing import List, Optional
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 import neo4j
 from dotenv import load_dotenv
@@ -89,6 +95,12 @@ class QueryResponse(BaseModel):
     used_edges: List[str]
     retriever_used: str
     context: str = ""
+
+
+class QAUpdateRequest(BaseModel):
+    question: str
+    answer: str
+    tags: List[str] = []
 
 
 def extract_nodes_from_content(content: str) -> tuple[List[str], List[str]]:
@@ -338,7 +350,7 @@ async def admin():
 # ─────────────────────────────────────────
 
 @app.get("/admin/menus")
-async def admin_get_menus(q: str = Query("", description="메뉴 검색어")):
+def admin_get_menus(q: str = Query("", description="메뉴 검색어")):
     """메뉴 트리 + 각 MenuItem의 연결 QA 수 반환"""
     try:
         with driver.session() as session:
@@ -366,7 +378,7 @@ async def admin_get_menus(q: str = Query("", description="메뉴 검색어")):
 
 
 @app.get("/admin/qa")
-async def admin_get_qa(
+def admin_get_qa(
     menuitem_id: Optional[str] = Query(None, description="연결된 QA 조회 (MenuItem.id)"),
     q: Optional[str] = Query(None, description="QA 검색어"),
     source: Optional[str] = Query(None, description="소스 파일 필터"),
@@ -430,7 +442,7 @@ async def admin_get_qa(
 
 
 @app.get("/admin/qa/{qa_id}/detail")
-async def admin_get_qa_detail(qa_id: str):
+def admin_get_qa_detail(qa_id: str):
     """QA 단건 조회 (ID 직접 지정)"""
     try:
         with driver.session() as session:
@@ -455,8 +467,30 @@ async def admin_get_qa_detail(qa_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.patch("/admin/qa/{qa_id}")
+def admin_update_qa(qa_id: str, req: QAUpdateRequest):
+    """QA 질문·답변·태그 수정"""
+    try:
+        with driver.session() as session:
+            row = session.run("""
+                MATCH (q:QA {id: $id})
+                SET q.question = $question,
+                    q.answer   = $answer,
+                    q.tags     = $tags
+                RETURN q.id AS id
+            """, id=qa_id, question=req.question,
+                 answer=req.answer, tags=req.tags).single()
+        if not row:
+            raise HTTPException(status_code=404, detail="QA를 찾을 수 없습니다")
+        return {"status": "ok", "id": row["id"]}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/admin/qa/{qa_id}/menus")
-async def admin_get_qa_menus(qa_id: str):
+def admin_get_qa_menus(qa_id: str):
     """특정 QA에 연결된 MenuItem 목록"""
     try:
         with driver.session() as session:
@@ -483,7 +517,7 @@ class MenuRelationRequest(BaseModel):
 
 
 @app.post("/admin/qa-link")
-async def admin_create_link(req: LinkRequest):
+def admin_create_link(req: LinkRequest):
     """QA ↔ MenuItem 연결 생성"""
     try:
         with driver.session() as session:
@@ -503,8 +537,77 @@ async def admin_create_link(req: LinkRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class DescriptionRequest(BaseModel):
+    menu_id: str
+    description: str
+    generate_embedding: bool = False
+
+
+@app.get("/admin/menu-desc-list")
+def admin_menu_desc_list(no_desc_only: bool = Query(False)):
+    """MenuItem 목록 + description/embedding 보유 여부"""
+    try:
+        with driver.session() as session:
+            result = session.run("""
+                MATCH (m:MenuItem)
+                WHERE $no_desc_only = false
+                   OR m.description IS NULL
+                   OR m.description = ''
+                RETURN
+                    m.id          AS id,
+                    m.name        AS name,
+                    m.menu_path   AS menu_path,
+                    m.main_menu   AS main_menu,
+                    m.sub_menu    AS sub_menu,
+                    m.description AS description,
+                    m.embedding IS NOT NULL AS has_embedding
+                ORDER BY m.main_menu, m.sub_menu, m.name
+            """, no_desc_only=no_desc_only)
+            items = [dict(r) for r in result]
+        return {"items": items}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.patch("/admin/menu-description")
+def admin_update_menu_description(req: DescriptionRequest):
+    """MenuItem description 저장 (옵션: Gemini 임베딩 생성)"""
+    try:
+        embedding = None
+        if req.generate_embedding:
+            if not req.description.strip():
+                raise HTTPException(status_code=400, detail="임베딩 생성에는 description이 필요합니다")
+            embedding = embedder.embed_query(req.description)
+
+        with driver.session() as session:
+            if embedding is not None:
+                row = session.run("""
+                    MATCH (m:MenuItem {id: $id})
+                    SET m.description = $desc, m.embedding = $embedding
+                    RETURN m.menu_path AS path
+                """, id=req.menu_id, desc=req.description, embedding=embedding).single()
+            else:
+                row = session.run("""
+                    MATCH (m:MenuItem {id: $id})
+                    SET m.description = $desc
+                    RETURN m.menu_path AS path
+                """, id=req.menu_id, desc=req.description).single()
+
+        if not row:
+            raise HTTPException(status_code=404, detail="MenuItem을 찾을 수 없습니다")
+        return {
+            "status": "ok",
+            "path": row["path"],
+            "has_embedding": embedding is not None,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.delete("/admin/qa-link")
-async def admin_delete_link(req: LinkRequest):
+def admin_delete_link(req: LinkRequest):
     """QA ↔ MenuItem 연결 해제"""
     try:
         with driver.session() as session:
@@ -518,7 +621,7 @@ async def admin_delete_link(req: LinkRequest):
 
 
 @app.get("/admin/menu-relations")
-async def admin_get_menu_relations():
+def admin_get_menu_relations():
     """MenuItem 간 RELATED_MENU 관계 목록 조회"""
     try:
         with driver.session() as session:
@@ -537,7 +640,7 @@ async def admin_get_menu_relations():
 
 
 @app.post("/admin/menu-relation")
-async def admin_create_menu_relation(req: MenuRelationRequest):
+def admin_create_menu_relation(req: MenuRelationRequest):
     """MenuItem ↔ MenuItem 관계 생성"""
     if req.source_id == req.target_id:
         raise HTTPException(status_code=400, detail="소스와 대상 메뉴가 동일합니다")
@@ -561,7 +664,7 @@ async def admin_create_menu_relation(req: MenuRelationRequest):
 
 
 @app.delete("/admin/menu-relation")
-async def admin_delete_menu_relation(req: MenuRelationRequest):
+def admin_delete_menu_relation(req: MenuRelationRequest):
     """MenuItem ↔ MenuItem 관계 삭제"""
     try:
         with driver.session() as session:
@@ -574,8 +677,72 @@ async def admin_delete_menu_relation(req: MenuRelationRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/admin/export/menu-qa")
+def export_menu_qa():
+    """메뉴별 연결된 QA를 JSON 파일로 묶어 ZIP 다운로드"""
+    try:
+        with driver.session() as session:
+            result = session.run("""
+                MATCH (m:MenuItem)
+                OPTIONAL MATCH (q:QA)-[:IN_MENU]->(m)
+                WITH m, collect(q) AS raw_qas
+                WITH m, [qa IN raw_qas WHERE qa IS NOT NULL] AS qas
+                WHERE size(qas) > 0
+                RETURN
+                    m.id        AS menu_id,
+                    m.name      AS menu_name,
+                    m.menu_path AS menu_path,
+                    m.main_menu AS main_menu,
+                    m.sub_menu  AS sub_menu,
+                    [qa IN qas | {
+                        id:       qa.id,
+                        question: qa.question,
+                        answer:   qa.answer,
+                        tags:     qa.tags,
+                        source:   qa.source
+                    }] AS qa_items
+                ORDER BY m.menu_path
+            """)
+            rows = [dict(r) for r in result]
+
+        exported_at = datetime.now().isoformat()
+        zip_buffer = io.BytesIO()
+
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+            for row in rows:
+                # 파일명: 메뉴 경로에서 특수문자 제거
+                raw_name = row["menu_path"] or row["menu_name"] or row["menu_id"]
+                safe_name = raw_name.replace(" > ", "_").replace("/", "_").replace("\\", "_")
+                safe_name = re.sub(r'[<>:"|?*\s]', "_", safe_name)
+                filename = f"{safe_name}.json"
+
+                content = {
+                    "menu": {
+                        "id":        row["menu_id"],
+                        "name":      row["menu_name"],
+                        "menu_path": row["menu_path"],
+                        "main_menu": row["main_menu"],
+                        "sub_menu":  row["sub_menu"],
+                    },
+                    "qa_count":   len(row["qa_items"]),
+                    "qa_items":   row["qa_items"],
+                    "exported_at": exported_at,
+                }
+                zf.writestr(filename, json.dumps(content, ensure_ascii=False, indent=2))
+
+        zip_buffer.seek(0)
+        date_str = datetime.now().strftime("%Y%m%d")
+        return StreamingResponse(
+            zip_buffer,
+            media_type="application/zip",
+            headers={"Content-Disposition": f'attachment; filename="menu_qa_export_{date_str}.zip"'},
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/admin/sources")
-async def admin_get_sources():
+def admin_get_sources():
     """QA source 목록 + 수량"""
     try:
         with driver.session() as session:
@@ -591,7 +758,7 @@ async def admin_get_sources():
 
 
 @app.get("/admin/review")
-async def admin_review(
+def admin_review(
     source: str = Query(..., description="검토할 QA 소스"),
     limit: int = Query(200, le=500),
 ):
@@ -626,7 +793,7 @@ async def admin_review(
 
 
 @app.get("/graph")
-async def get_graph():
+def get_graph():
     """전체 그래프 구조 반환"""
     try:
         with driver.session() as session:
@@ -690,9 +857,8 @@ async def get_graph():
 
 
 @app.post("/query", response_model=QueryResponse)
-async def query_graphrag(req: QueryRequest):
+def query_graphrag(req: QueryRequest):
     """GraphRAG 쿼리 실행 및 사용된 노드/엣지 반환"""
-    import time as _time
     try:
         if graphrag is None:
             raise HTTPException(status_code=500, detail="GraphRAG not initialized")
@@ -707,7 +873,7 @@ async def query_graphrag(req: QueryRequest):
                 if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
                     wait = 15 * (attempt + 1)
                     print(f"⚠️  LLM 429 - {wait}초 후 재시도 ({attempt+1}/4)")
-                    _time.sleep(wait)
+                    time.sleep(wait)
                     last_err = e
                 else:
                     raise
@@ -785,14 +951,13 @@ async def query_graphrag(req: QueryRequest):
         )
 
     except Exception as e:
-        import traceback
         error_detail = f"Query failed: {str(e)}\n{traceback.format_exc()}"
         print(error_detail)
         raise HTTPException(status_code=500, detail=error_detail)
 
 
 @app.get("/health")
-async def health_check():
+def health_check():
     """헬스 체크"""
     try:
         with driver.session() as session:

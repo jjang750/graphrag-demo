@@ -3,6 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <title>XPERP QA-메뉴 연결 관리</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/driver.js@1.3.1/dist/driver.css"/>
+<script src="https://cdn.jsdelivr.net/npm/driver.js@1.3.1/dist/driver.js.iife.js"></script>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body { font-family: 'Malgun Gothic', sans-serif; font-size: 13px; background: #F5F5F5; color: #333; height: 100vh; display: flex; flex-direction: column; }
@@ -22,6 +24,12 @@ body { font-family: 'Malgun Gothic', sans-serif; font-size: 13px; background: #F
     font-size: 11px; font-weight: 600;
     background: rgba(255,255,255,0.15); color: #fff;
 }
+.export-btn {
+    text-decoration: none; cursor: pointer;
+    background: rgba(255,255,255,0.25); border: 1px solid rgba(255,255,255,0.4);
+    transition: background 0.15s;
+}
+.export-btn:hover { background: rgba(255,255,255,0.4); }
 
 /* 메인 탭 바 */
 .main-tab-bar {
@@ -348,6 +356,115 @@ input[type=text]:focus, select:focus { outline: none; border-color: #5C6BC0; }
 }
 .rel-del-btn:hover { background: #E53935; color: #fff; }
 
+/* ── 메뉴설명 탭 ── */
+#tab-desc {
+    flex: 1; overflow: hidden; display: none; flex-direction: row;
+    background: #F5F5F5;
+}
+.desc-list-panel {
+    width: 300px; flex-shrink: 0; display: flex; flex-direction: column;
+    border-right: 2px solid #C5CAE9; background: #fff; overflow: hidden;
+}
+.desc-list-header {
+    padding: 10px 14px; background: #E8EAF6; color: #1A237E;
+    font-weight: 700; font-size: 13px; flex-shrink: 0;
+    border-bottom: 1px solid #C5CAE9;
+}
+.desc-filter-bar {
+    padding: 8px 10px; border-bottom: 1px solid #E0E0E0;
+    display: flex; flex-direction: column; gap: 6px; flex-shrink: 0;
+}
+.desc-filter-bar input[type="text"] {
+    width: 100%; padding: 6px 8px; border: 1px solid #DDD;
+    border-radius: 4px; font-size: 12px;
+}
+.desc-no-desc-toggle {
+    display: flex; align-items: center; gap: 6px; font-size: 12px; color: #555; cursor: pointer;
+}
+.desc-menu-list { flex: 1; overflow-y: auto; }
+.desc-group-label {
+    padding: 6px 12px; font-size: 11px; font-weight: 700;
+    color: #666; background: #F8F8F8; border-bottom: 1px solid #EEEEEE;
+    position: sticky; top: 0; z-index: 1;
+}
+.desc-menu-item {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 8px 12px; cursor: pointer; border-bottom: 1px solid #F5F5F5;
+    gap: 6px; transition: background 0.1s;
+}
+.desc-menu-item:hover { background: #E8EAF6; }
+.desc-menu-item.selected { background: #C5CAE9; font-weight: 700; }
+.desc-menu-name { flex: 1; font-size: 12px; color: #333; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.desc-badge {
+    flex-shrink: 0; font-size: 10px; font-weight: 700; padding: 2px 6px;
+    border-radius: 8px;
+}
+.desc-badge-ok  { background: #E8F5E9; color: #388E3C; }
+.desc-badge-no  { background: #FFEBEE; color: #C62828; }
+.desc-badge-emb { background: #E3F2FD; color: #1565C0; margin-left: 2px; }
+
+.desc-editor-panel {
+    flex: 1; display: flex; flex-direction: column; overflow: hidden; padding: 20px;
+}
+.desc-editor-empty {
+    flex: 1; display: flex; align-items: center; justify-content: center;
+    color: #AAA; font-size: 14px;
+}
+.desc-editor-form { flex: 1; display: flex; flex-direction: column; gap: 14px; }
+.desc-editor-path {
+    font-size: 15px; font-weight: 700; color: #1A237E; padding-bottom: 10px;
+    border-bottom: 2px solid #C5CAE9;
+}
+.desc-editor-label { font-size: 12px; font-weight: 600; color: #555; margin-bottom: 4px; }
+.desc-editor-textarea {
+    flex: 1; min-height: 180px; resize: vertical;
+    border: 1px solid #CCC; border-radius: 6px;
+    padding: 10px; font-size: 13px; font-family: inherit; line-height: 1.6;
+    outline: none; transition: border-color 0.2s;
+}
+.desc-editor-textarea:focus { border-color: #5C6BC0; }
+.desc-char-count { font-size: 11px; color: #999; text-align: right; }
+.desc-action-row {
+    display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+}
+.desc-save-btn {
+    padding: 9px 20px; border-radius: 6px; border: none; cursor: pointer;
+    font-size: 13px; font-weight: 700; transition: all 0.15s;
+}
+.desc-save-btn.primary {
+    background: #3949AB; color: #fff;
+}
+.desc-save-btn.primary:hover { background: #283593; }
+.desc-save-btn.embed {
+    background: #00897B; color: #fff;
+}
+.desc-save-btn.embed:hover { background: #00695C; }
+.desc-save-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.desc-status-msg { font-size: 12px; margin-left: auto; }
+.desc-status-ok  { color: #388E3C; }
+.desc-status-err { color: #C62828; }
+
+/* ── QA 편집 모드 ── */
+.qa-edit-label { font-size: 11px; font-weight: 700; color: #555; margin-bottom: 4px; }
+.qa-edit-textarea {
+    width: 100%; border: 1px solid #BDBDBD; border-radius: 5px;
+    padding: 8px; font-size: 13px; font-family: inherit; line-height: 1.6;
+    resize: vertical; outline: none; transition: border-color 0.2s;
+}
+.qa-edit-textarea:focus { border-color: #5C6BC0; }
+.qa-edit-tag-input {
+    width: 100%; border: 1px solid #BDBDBD; border-radius: 5px;
+    padding: 7px 8px; font-size: 12px; font-family: inherit;
+    outline: none; transition: border-color 0.2s;
+}
+.qa-edit-tag-input:focus { border-color: #5C6BC0; }
+.qa-edit-actions {
+    display: flex; gap: 8px; align-items: center; margin-top: 2px;
+}
+.qa-edit-msg { font-size: 12px; margin-left: auto; }
+.qa-edit-msg.ok  { color: #388E3C; }
+.qa-edit-msg.err { color: #C62828; }
+
 /* 스크롤바 */
 ::-webkit-scrollbar { width: 5px; }
 ::-webkit-scrollbar-thumb { background: #CCC; border-radius: 4px; }
@@ -362,6 +479,9 @@ input[type=text]:focus, select:focus { outline: none; border-color: #5C6BC0; }
         <span class="stat-chip" id="statTotal">QA: -</span>
         <span class="stat-chip" id="statLinked">연결됨: -</span>
         <span class="stat-chip" id="statMenus">메뉴: -</span>
+        <a href="/admin/export/menu-qa" class="stat-chip export-btn" title="메뉴별 QA를 JSON 파일로 다운로드">
+            📥 QA 내보내기
+        </a>
     </div>
 </div>
 
@@ -369,6 +489,9 @@ input[type=text]:focus, select:focus { outline: none; border-color: #5C6BC0; }
 <div class="main-tab-bar">
     <button class="main-tab-btn active" onclick="showMainTab('qa')" id="main-tab-qa">📄 QA관리</button>
     <button class="main-tab-btn" onclick="showMainTab('relation')" id="main-tab-relation">🔗 메뉴관계</button>
+    <button class="main-tab-btn" onclick="showMainTab('desc')" id="main-tab-desc">📝 메뉴설명</button>
+    <button class="main-tab-btn" onclick="openHelp()" style="margin-left:auto; padding:8px 16px; font-size:13px;"
+        title="도움말">❓ 도움말</button>
 </div>
 
 <!-- QA 관리 탭 (기존 3-패널 레이아웃) -->
@@ -549,6 +672,58 @@ input[type=text]:focus, select:focus { outline: none; border-color: #5C6BC0; }
 
 </div>
 
+<!-- 메뉴설명 탭 -->
+<div id="tab-desc">
+
+    <!-- 좌측: 메뉴 목록 -->
+    <div class="desc-list-panel">
+        <div class="desc-list-header">📝 메뉴 목록</div>
+        <div class="desc-filter-bar">
+            <input type="text" id="descSearch" placeholder="메뉴 이름으로 검색..."
+                oninput="filterDescList()">
+            <label class="desc-no-desc-toggle">
+                <input type="checkbox" id="descNoDescOnly" onchange="loadDescMenuList()">
+                설명 없는 메뉴만 보기
+            </label>
+        </div>
+        <div class="desc-menu-list" id="descMenuList">
+            <div class="loading-text" style="padding:20px;text-align:center;color:#aaa">
+                탭을 클릭하면 로딩됩니다
+            </div>
+        </div>
+    </div>
+
+    <!-- 우측: 설명 편집기 -->
+    <div class="desc-editor-panel">
+        <div class="desc-editor-empty" id="descEditorEmpty">← 좌측에서 메뉴를 선택하세요</div>
+        <div class="desc-editor-form" id="descEditorForm" style="display:none">
+            <div class="desc-editor-path" id="descEditorPath"></div>
+            <div>
+                <div class="desc-editor-label">메뉴 설명 (기능 및 사용 방법)</div>
+                <textarea class="desc-editor-textarea" id="descTextarea" rows="10"
+                    placeholder="이 메뉴의 기능과 사용 방법을 입력하세요.&#10;입력한 내용은 임베딩 생성에 활용되어 챗봇 검색 정확도를 높입니다."
+                    oninput="updateDescCharCount()"></textarea>
+                <div class="desc-char-count" id="descCharCount">0자</div>
+            </div>
+            <div class="desc-action-row">
+                <button class="desc-save-btn primary" id="descSaveBtn" onclick="saveDescription(false)">
+                    💾 저장
+                </button>
+                <button class="desc-save-btn embed" id="descSaveEmbedBtn" onclick="saveDescription(true)">
+                    ✨ 저장 + 임베딩 생성
+                </button>
+                <span class="desc-status-msg" id="descStatusMsg"></span>
+            </div>
+            <div style="font-size:11px;color:#999;line-height:1.6;padding-top:4px;border-top:1px solid #EEE">
+                💡 <b>저장</b>: 설명만 저장합니다.<br>
+                ✨ <b>저장 + 임베딩 생성</b>: 설명을 저장하고 Gemini로 임베딩을 생성합니다.
+                임베딩이 있어야 챗봇 벡터 검색에 활용됩니다.
+            </div>
+        </div>
+    </div>
+
+</div>
+
 <script>
 let allMenuItems = [];   // 전체 MenuItem
 let selectedMenuItemId = null;
@@ -565,14 +740,13 @@ let relMenuItems = [];  // 관계 탭용 메뉴 목록 캐시
 // 메인 탭 전환
 // ─────────────────────────────────────────
 function showMainTab(tab) {
-    ['qa', 'relation'].forEach(t => {
+    ['qa', 'relation', 'desc'].forEach(t => {
         const content = document.getElementById(`tab-${t}`);
         const btn = document.getElementById(`main-tab-${t}`);
         if (content) content.style.display = t === tab ? 'flex' : 'none';
         if (btn) btn.classList.toggle('active', t === tab);
     });
     if (tab === 'relation') {
-        // allMenuItems가 이미 로드됐으면 재사용
         relMenuItems = allMenuItems.length ? [...allMenuItems] : [];
         if (relMenuItems.length) {
             renderRelList('src', relMenuItems);
@@ -585,6 +759,9 @@ function showMainTab(tab) {
             });
         }
         loadRelations();
+    }
+    if (tab === 'desc') {
+        loadDescMenuList();
     }
 }
 
@@ -847,11 +1024,29 @@ async function renderDetail(qaId) {
             <div class="detail-section-header">
                 📌 ${escHtml(qa.id)}
                 <span style="font-size:11px;color:#999">${qa.source || ''}</span>
+                <button class="btn btn-ghost btn-sm" style="margin-left:auto"
+                    onclick="toggleQaEdit('${escHtml(qaId)}')">✏️ 편집</button>
             </div>
-            <div class="detail-section-body">
+            <!-- 보기 모드 -->
+            <div class="detail-section-body" id="qaViewBody">
                 <div class="detail-q">Q. ${escHtml(qa.question)}</div>
                 <div class="detail-a">A. ${escHtml(qa.answer)}</div>
                 <div class="tag-list">${(qa.tags||[]).map(t => `<span class="tag">#${escHtml(t)}</span>`).join('')}</div>
+            </div>
+            <!-- 편집 모드 (초기 숨김) -->
+            <div class="detail-section-body" id="qaEditBody" style="display:none">
+                <div class="qa-edit-label">질문</div>
+                <textarea class="qa-edit-textarea" id="editQuestion" rows="3">${escHtml(qa.question)}</textarea>
+                <div class="qa-edit-label" style="margin-top:10px">답변</div>
+                <textarea class="qa-edit-textarea" id="editAnswer" rows="6">${escHtml(qa.answer)}</textarea>
+                <div class="qa-edit-label" style="margin-top:10px">태그 <span style="font-weight:400;color:#999">(쉼표로 구분)</span></div>
+                <input class="qa-edit-tag-input" id="editTags" type="text"
+                    value="${escHtml((qa.tags||[]).join(', '))}">
+                <div class="qa-edit-actions" style="margin-top:12px">
+                    <button class="btn btn-primary btn-sm" onclick="saveQaEdit('${escHtml(qaId)}')">💾 저장</button>
+                    <button class="btn btn-ghost btn-sm" onclick="cancelQaEdit()">✕ 취소</button>
+                    <span class="qa-edit-msg" id="qaEditMsg"></span>
+                </div>
             </div>
         </div>
 
@@ -893,6 +1088,76 @@ async function renderDetail(qaId) {
     } catch(e) {
         panel.innerHTML = '<div class="empty">로드 실패</div>';
     }
+}
+
+function toggleQaEdit(qaId) {
+    const viewBody = document.getElementById('qaViewBody');
+    const editBody = document.getElementById('qaEditBody');
+    const isEditing = editBody.style.display !== 'none';
+    if (isEditing) {
+        cancelQaEdit();
+    } else {
+        viewBody.style.display = 'none';
+        editBody.style.display = 'block';
+        document.getElementById('editQuestion').focus();
+    }
+}
+
+function cancelQaEdit() {
+    document.getElementById('qaViewBody').style.display = 'block';
+    document.getElementById('qaEditBody').style.display = 'none';
+    document.getElementById('qaEditMsg').textContent = '';
+}
+
+async function saveQaEdit(qaId) {
+    const question = document.getElementById('editQuestion').value.trim();
+    const answer   = document.getElementById('editAnswer').value.trim();
+    const tagsRaw  = document.getElementById('editTags').value;
+    const tags     = tagsRaw.split(',').map(t => t.trim()).filter(t => t.length > 0);
+
+    if (!question) { setQaEditMsg('질문을 입력하세요', false); return; }
+    if (!answer)   { setQaEditMsg('답변을 입력하세요', false); return; }
+
+    setQaEditMsg('저장 중...', null);
+    document.querySelectorAll('#qaEditBody button').forEach(b => b.disabled = true);
+
+    try {
+        const res = await fetch(`/admin/qa/${encodeURIComponent(qaId)}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ question, answer, tags }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || '저장 실패');
+
+        setQaEditMsg('저장 완료 ✓', true);
+
+        // 보기 모드 내용 즉시 갱신
+        const viewBody = document.getElementById('qaViewBody');
+        viewBody.querySelector('.detail-q').textContent = 'Q. ' + question;
+        viewBody.querySelector('.detail-a').textContent = 'A. ' + answer;
+        viewBody.querySelector('.tag-list').innerHTML =
+            tags.map(t => `<span class="tag">#${escHtml(t)}</span>`).join('');
+
+        // QA 목록 카드 질문 텍스트도 갱신
+        const card = document.getElementById(`qa-card-${qaId}`);
+        if (card) card.querySelector('.qa-q').textContent = question;
+
+        setTimeout(() => {
+            cancelQaEdit();
+        }, 800);
+    } catch(e) {
+        setQaEditMsg(e.message, false);
+    } finally {
+        document.querySelectorAll('#qaEditBody button').forEach(b => b.disabled = false);
+    }
+}
+
+function setQaEditMsg(msg, ok) {
+    const el = document.getElementById('qaEditMsg');
+    if (!el) return;
+    el.textContent = msg;
+    el.className = 'qa-edit-msg' + (ok === true ? ' ok' : ok === false ? ' err' : '');
 }
 
 function searchMenuForLink() {
@@ -1267,6 +1532,344 @@ function escHtml(str) {
 
 // 초기화
 init();
+
+// ─────────────────────────────────────────
+// ─────────────────────────────────────────
+// 메뉴설명 탭
+// ─────────────────────────────────────────
+let descAllItems = [];   // 전체 메뉴 목록 캐시
+let descSelectedId = null;
+
+async function loadDescMenuList() {
+    const noDescOnly = document.getElementById('descNoDescOnly').checked;
+    const res = await fetch(`/admin/menu-desc-list?no_desc_only=${noDescOnly}`);
+    const data = await res.json();
+    descAllItems = data.items || [];
+    renderDescMenuList(descAllItems);
+}
+
+function filterDescList() {
+    const q = (document.getElementById('descSearch').value || '').trim().toLowerCase();
+    const filtered = q
+        ? descAllItems.filter(m => (m.name || '').toLowerCase().includes(q) || (m.menu_path || '').toLowerCase().includes(q))
+        : descAllItems;
+    renderDescMenuList(filtered);
+}
+
+function renderDescMenuList(items) {
+    const el = document.getElementById('descMenuList');
+    if (!items.length) {
+        el.innerHTML = '<div style="padding:20px;text-align:center;color:#aaa">항목 없음</div>';
+        return;
+    }
+    // main_menu 그룹별 렌더링
+    const groups = {};
+    items.forEach(m => {
+        const g = m.main_menu || '기타';
+        if (!groups[g]) groups[g] = [];
+        groups[g].push(m);
+    });
+
+    let html = '';
+    Object.keys(groups).sort().forEach(g => {
+        html += `<div class="desc-group-label">${g}</div>`;
+        groups[g].forEach(m => {
+            const hasDesc = m.description && m.description.trim().length > 0;
+            const hasEmb  = m.has_embedding;
+            const sel     = m.id === descSelectedId ? ' selected' : '';
+            const menuName = m.menu_item || m.name || m.sub_menu || '';
+            const subLabel = m.sub_menu ? `<span style="color:#999;font-size:11px"> ${m.sub_menu} &rsaquo;</span> ` : '';
+            html += `
+            <div class="desc-menu-item${sel}" onclick="selectDescMenu('${m.id.replace(/'/g,"\\'")}')">
+                <span class="desc-menu-name" title="${m.menu_path||''}">${subLabel}${menuName}</span>
+                <span class="desc-badge ${hasDesc ? 'desc-badge-ok' : 'desc-badge-no'}">${hasDesc ? '설명✓' : '설명✗'}</span>
+                ${hasEmb ? '<span class="desc-badge desc-badge-emb">임베딩</span>' : ''}
+            </div>`;
+        });
+    });
+    el.innerHTML = html;
+}
+
+function selectDescMenu(id) {
+    descSelectedId = id;
+    const item = descAllItems.find(m => m.id === id);
+    const path = item ? (item.menu_path || '') : '';
+    const description = item ? (item.description || '') : '';
+
+    // 선택 하이라이트 갱신
+    document.querySelectorAll('.desc-menu-item').forEach(el => el.classList.remove('selected'));
+    event.currentTarget.classList.add('selected');
+
+    document.getElementById('descEditorEmpty').style.display = 'none';
+    document.getElementById('descEditorForm').style.display  = 'flex';
+    document.getElementById('descEditorPath').textContent     = path;
+    document.getElementById('descTextarea').value             = description;
+    document.getElementById('descStatusMsg').textContent      = '';
+    updateDescCharCount();
+}
+
+function updateDescCharCount() {
+    const len = (document.getElementById('descTextarea').value || '').length;
+    document.getElementById('descCharCount').textContent = `${len.toLocaleString()}자`;
+}
+
+async function saveDescription(withEmbed) {
+    if (!descSelectedId) return;
+    const desc = document.getElementById('descTextarea').value.trim();
+    if (withEmbed && !desc) {
+        showDescStatus('임베딩 생성에는 설명이 필요합니다', false);
+        return;
+    }
+
+    const saveBtn      = document.getElementById('descSaveBtn');
+    const saveEmbedBtn = document.getElementById('descSaveEmbedBtn');
+    saveBtn.disabled = saveEmbedBtn.disabled = true;
+    showDescStatus(withEmbed ? '임베딩 생성 중... (수초 소요)' : '저장 중...', null);
+
+    try {
+        const res = await fetch('/admin/menu-description', {
+            method: 'PATCH',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                menu_id: descSelectedId,
+                description: desc,
+                generate_embedding: withEmbed,
+            }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || '오류');
+        const embMsg = data.has_embedding ? ' (임베딩 생성 완료)' : '';
+        showDescStatus(`저장 완료${embMsg}`, true);
+        // 목록 뱃지 갱신을 위해 캐시 업데이트
+        const item = descAllItems.find(m => m.id === descSelectedId);
+        if (item) {
+            item.description   = desc;
+            item.has_embedding = data.has_embedding || item.has_embedding;
+        }
+        renderDescMenuList(descAllItems);
+        // 선택 복원
+        document.querySelectorAll('.desc-menu-item').forEach(el => {
+            if (el.querySelector('.desc-menu-name') && el.onclick) {
+                // re-select by id
+            }
+        });
+    } catch (e) {
+        showDescStatus(e.message, false);
+    } finally {
+        saveBtn.disabled = saveEmbedBtn.disabled = false;
+    }
+}
+
+function showDescStatus(msg, ok) {
+    const el = document.getElementById('descStatusMsg');
+    el.textContent  = msg;
+    el.className    = 'desc-status-msg' + (ok === true ? ' desc-status-ok' : ok === false ? ' desc-status-err' : '');
+}
+
+// Driver.js 도움말 투어
+// ─────────────────────────────────────────
+function startQaTour() {
+    const driverObj = window.driver.js.driver({
+        showProgress: true,
+        progressText: '{{current}} / {{total}}',
+        nextBtnText: '다음 →',
+        prevBtnText: '← 이전',
+        doneBtnText: '완료',
+        steps: [
+            {
+                element: '.panel-menu',
+                popover: {
+                    title: '① 메뉴 목록',
+                    description: '관리할 메뉴를 선택하는 패널입니다.<br>검색어를 입력하거나 목록을 클릭해 메뉴를 선택하세요.',
+                    side: 'right', align: 'start'
+                }
+            },
+            {
+                element: '#menuSearch',
+                popover: {
+                    title: '메뉴 검색',
+                    description: '메뉴 이름 또는 경로의 일부를 입력하면 실시간으로 목록이 좁혀집니다.',
+                    side: 'right', align: 'start'
+                }
+            },
+            {
+                element: '.panel-qa',
+                popover: {
+                    title: '② QA 목록',
+                    description: '선택한 메뉴와 관련된 QA 항목들이 표시됩니다.<br>탭으로 <b>연결됨 / 미연결 / 검색 / 검토</b>를 전환할 수 있습니다.',
+                    side: 'top', align: 'center'
+                }
+            },
+            {
+                element: '#tab-linked',
+                popover: {
+                    title: '연결됨 탭',
+                    description: '현재 선택한 메뉴에 <b>이미 연결된 QA</b> 목록입니다.',
+                    side: 'bottom', align: 'start'
+                }
+            },
+            {
+                element: '#tab-unlinked',
+                popover: {
+                    title: '미연결 탭',
+                    description: '<b>어떤 메뉴에도 연결되지 않은 QA</b> 목록입니다.<br>소스 필터로 특정 파일만 볼 수 있습니다.',
+                    side: 'bottom', align: 'start'
+                }
+            },
+            {
+                element: '#tab-search',
+                popover: {
+                    title: '검색 탭',
+                    description: '질문·답변 키워드 또는 소스 파일 이름으로 <b>QA를 검색</b>합니다.',
+                    side: 'bottom', align: 'start'
+                }
+            },
+            {
+                element: '#tab-review',
+                popover: {
+                    title: '검토 탭',
+                    description: '소스별 연결 상태를 확인하여 <b>잘못 연결된 QA를 찾아 해제</b>합니다.<br>⚠️ 표시는 도메인 불일치 가능성을 나타냅니다.',
+                    side: 'bottom', align: 'start'
+                }
+            },
+            {
+                element: '.panel-detail',
+                popover: {
+                    title: '③ QA 상세 / 편집',
+                    description: 'QA 항목을 클릭하면 여기에서 질문·답변을 수정하고<br>메뉴 연결을 추가하거나 해제할 수 있습니다.',
+                    side: 'left', align: 'start'
+                }
+            },
+            {
+                element: '.export-btn',
+                popover: {
+                    title: '📥 QA 내보내기',
+                    description: '메뉴별로 연결된 QA를 <b>JSON 파일 묶음(ZIP)</b>으로 다운로드합니다.',
+                    side: 'bottom', align: 'end'
+                }
+            }
+        ]
+    });
+    driverObj.drive();
+}
+
+function startRelationTour() {
+    const driverObj = window.driver.js.driver({
+        showProgress: true,
+        progressText: '{{current}} / {{total}}',
+        nextBtnText: '다음 →',
+        prevBtnText: '← 이전',
+        doneBtnText: '완료',
+        steps: [
+            {
+                element: '.rel-side-panel:first-child',
+                popover: {
+                    title: '① 소스 메뉴 선택',
+                    description: '관계의 <b>기준(소스)</b>이 되는 메뉴를 클릭하여 선택하세요.<br>상단 필터로 메뉴를 빠르게 찾을 수 있습니다.',
+                    side: 'right', align: 'start'
+                }
+            },
+            {
+                element: '.rel-mid-panel',
+                popover: {
+                    title: '② 관계 유형 설정',
+                    description: '소스와 대상 메뉴 사이의 관계를 선택합니다.<br>· <b>↔ 관련메뉴</b>: 함께 참고할 메뉴<br>· <b>→ 선행업무</b>: 먼저 처리해야 할 메뉴<br>· <b>← 후속업무</b>: 이후에 이어지는 메뉴',
+                    side: 'top', align: 'center'
+                }
+            },
+            {
+                element: '.rel-side-panel:last-child',
+                popover: {
+                    title: '③ 대상 메뉴 선택',
+                    description: '관계의 <b>대상</b>이 되는 메뉴를 클릭하여 선택하세요.',
+                    side: 'left', align: 'start'
+                }
+            },
+            {
+                element: '.rel-add-btn',
+                popover: {
+                    title: '④ 관계 추가',
+                    description: '소스·유형·대상을 모두 선택한 뒤 이 버튼을 클릭하면<br>관계가 즉시 저장되고 챗봇 검색에 반영됩니다.',
+                    side: 'top', align: 'center'
+                }
+            },
+            {
+                element: '.rel-bottom-area',
+                popover: {
+                    title: '⑤ 기존 관계 목록',
+                    description: '등록된 모든 메뉴 관계를 확인할 수 있습니다.<br>우측 <b>✕</b> 버튼으로 관계를 삭제할 수 있습니다.',
+                    side: 'top', align: 'center'
+                }
+            }
+        ]
+    });
+    driverObj.drive();
+}
+
+function startDescTour() {
+    const driverObj = window.driver.js.driver({
+        showProgress: true,
+        progressText: '{{current}} / {{total}}',
+        nextBtnText: '다음 →',
+        prevBtnText: '← 이전',
+        doneBtnText: '완료',
+        steps: [
+            {
+                element: '.desc-list-panel',
+                popover: {
+                    title: '① 메뉴 목록',
+                    description: '설명을 입력할 메뉴를 선택하는 패널입니다.<br>검색어로 빠르게 찾을 수 있습니다.',
+                    side: 'right', align: 'start'
+                }
+            },
+            {
+                element: '#descNoDescOnly',
+                popover: {
+                    title: '설명 없는 메뉴만 보기',
+                    description: '체크하면 아직 설명이 입력되지 않은 메뉴만 표시합니다.<br><b>설명✗</b> 배지가 표시된 메뉴가 대상입니다.',
+                    side: 'right', align: 'start'
+                }
+            },
+            {
+                element: '.desc-editor-panel',
+                popover: {
+                    title: '② 설명 편집기',
+                    description: '좌측에서 메뉴를 클릭하면 여기에 설명을 입력할 수 있습니다.',
+                    side: 'left', align: 'start'
+                }
+            },
+            {
+                element: '#descSaveBtn',
+                popover: {
+                    title: '💾 저장',
+                    description: '설명 텍스트만 저장합니다.<br>임베딩 없이 저장하면 챗봇 검색에는 반영되지 않습니다.',
+                    side: 'top', align: 'start'
+                }
+            },
+            {
+                element: '#descSaveEmbedBtn',
+                popover: {
+                    title: '✨ 저장 + 임베딩 생성',
+                    description: '설명을 저장하고 <b>Gemini로 임베딩을 생성</b>합니다.<br>임베딩이 있어야 챗봇 벡터 검색에서 해당 메뉴가 검색됩니다.<br>수 초가 소요됩니다.',
+                    side: 'top', align: 'start'
+                }
+            }
+        ]
+    });
+    driverObj.drive();
+}
+
+function openHelp() {
+    const activeTab = document.querySelector('.main-tab-btn.active');
+    if (activeTab && activeTab.id === 'main-tab-relation') {
+        startRelationTour();
+    } else if (activeTab && activeTab.id === 'main-tab-desc') {
+        startDescTour();
+    } else {
+        startQaTour();
+    }
+}
 </script>
+
 </body>
 </html>
