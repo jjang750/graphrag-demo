@@ -7,10 +7,11 @@ import traceback
 import zipfile
 from contextlib import asynccontextmanager
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Literal, Optional
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import neo4j
 from dotenv import load_dotenv
@@ -43,7 +44,6 @@ app = FastAPI(title="GraphRAG Demo API", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -333,6 +333,9 @@ def get_neo4j_schema() -> str:
         return schema_text
 
 
+app.mount("/libs", StaticFiles(directory="libs"), name="libs")
+
+
 @app.get("/")
 async def root():
     """루트 페이지 - 시각화 HTML 반환"""
@@ -518,7 +521,7 @@ class LinkRequest(BaseModel):
 class MenuRelationRequest(BaseModel):
     source_id: str
     target_id: str
-    rel_type: str   # "관련메뉴" | "선행업무" | "후속업무"
+    rel_type: Literal["관련메뉴", "선행업무", "후속업무"]
     memo: str = ""
 
 
@@ -990,4 +993,4 @@ def health_check():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8800)
