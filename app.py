@@ -373,6 +373,8 @@ def admin_get_menus(q: str = Query("", description="메뉴 검색어")):
             """, q=q)
             items = [dict(r) for r in result]
         return {"items": items}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -437,6 +439,8 @@ def admin_get_qa(
                     "source": r["source"],
                 })
         return {"items": rows, "count": len(rows)}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -500,6 +504,8 @@ def admin_get_qa_menus(qa_id: str):
             """, qa_id=qa_id)
             items = [dict(r) for r in result]
         return {"items": items}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -565,6 +571,8 @@ def admin_menu_desc_list(no_desc_only: bool = Query(False)):
             """, no_desc_only=no_desc_only)
             items = [dict(r) for r in result]
         return {"items": items}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -616,6 +624,8 @@ def admin_delete_link(req: LinkRequest):
                 DELETE r
             """, qa_id=req.qa_id, mid=req.menuitem_id)
         return {"status": "ok"}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -635,6 +645,8 @@ def admin_get_menu_relations():
             """)
             items = [dict(r) for r in result]
         return {"items": items, "count": len(items)}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -673,6 +685,8 @@ def admin_delete_menu_relation(req: MenuRelationRequest):
                 DELETE r
             """, source_id=req.source_id, target_id=req.target_id, rel_type=req.rel_type)
         return {"status": "ok"}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -737,6 +751,8 @@ def export_menu_qa():
             media_type="application/zip",
             headers={"Content-Disposition": f'attachment; filename="menu_qa_export_{date_str}.zip"'},
         )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -753,6 +769,8 @@ def admin_get_sources():
             """)
             items = [{"source": r["source"], "count": r["cnt"]} for r in result]
         return {"items": items}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -788,6 +806,8 @@ def admin_review(
                     "menus": list(r["menus"]),
                 })
         return {"items": items, "count": len(items)}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -852,6 +872,8 @@ def get_graph():
                 "nodes": nodes,
                 "edges": edges
             }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Graph retrieval failed: {str(e)}")
 
@@ -951,9 +973,8 @@ def query_graphrag(req: QueryRequest):
         )
 
     except Exception as e:
-        error_detail = f"Query failed: {str(e)}\n{traceback.format_exc()}"
-        print(error_detail)
-        raise HTTPException(status_code=500, detail=error_detail)
+        print(f"Query failed: {str(e)}\n{traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Query failed: {str(e)}")
 
 
 @app.get("/health")
@@ -964,7 +985,7 @@ def health_check():
             session.run("RETURN 1")
         return {"status": "healthy", "neo4j": "connected"}
     except Exception as e:
-        return {"status": "unhealthy", "error": str(e)}
+        raise HTTPException(status_code=503, detail=f"unhealthy: {str(e)}")
 
 
 if __name__ == "__main__":

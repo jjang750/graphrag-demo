@@ -845,7 +845,7 @@ function renderMenuTree(items) {
 
         html += `<div class="menu-group">
             <div class="menu-group-header" onclick="toggleGroup('${mainId}')">
-                📁 ${main}
+                📁 ${escHtml(main)}
                 <span class="qa-badge ${totalQa > 0 ? 'has-qa' : 'no-qa'}">${totalQa}</span>
                 <span class="collapse-icon" id="icon-${mainId}">▼</span>
             </div>
@@ -863,7 +863,7 @@ function renderMenuTree(items) {
                 const subId = `sub-${main}-${sub}`.replace(/\s/g, '_');
                 html += `
                 <div class="menu-sub-header" onclick="toggleGroup('${subId}')">
-                    📂 ${sub}
+                    📂 ${escHtml(sub)}
                     <span class="qa-badge ${subQa > 0 ? 'has-qa' : 'no-qa'}">${subQa}</span>
                     <span class="collapse-icon" id="icon-${subId}">▼</span>
                 </div>
@@ -879,8 +879,8 @@ function renderMenuTree(items) {
 
 function menuItemRow(m) {
     const active = m.id === selectedMenuItemId ? ' active' : '';
-    return `<div class="menu-item-row${active}" id="menu-row-${m.id}" onclick="selectMenuItem('${m.id}', '${escHtml(m.name)}', '${escHtml(m.menu_path || '')}')">
-        📄 ${m.name}
+    return `<div class="menu-item-row${active}" id="menu-row-${m.id}" onclick="selectMenuItem('${escHtml(m.id)}')">
+        📄 ${escHtml(m.name)}
         <span class="qa-badge ${m.qa_count > 0 ? 'has-qa' : 'no-qa'}">${m.qa_count}</span>
     </div>`;
 }
@@ -894,7 +894,7 @@ function toggleGroup(id) {
     if (icon) icon.textContent = hidden ? '▼' : '▶';
 }
 
-function selectMenuItem(id, name, path) {
+function selectMenuItem(id) {
     // 이전 active 해제
     if (selectedMenuItemId) {
         const prev = document.getElementById(`menu-row-${selectedMenuItemId}`);
@@ -904,7 +904,8 @@ function selectMenuItem(id, name, path) {
     const curr = document.getElementById(`menu-row-${id}`);
     if (curr) curr.classList.add('active');
 
-    document.getElementById('qaListTitle').textContent = name;
+    const item = allMenuItems.find(m => m.id === id);
+    document.getElementById('qaListTitle').textContent = item ? item.name : id;
     loadQaList();
 }
 
@@ -980,8 +981,8 @@ function renderQaList(items) {
         return `<div class="qa-card${active}" id="qa-card-${qa.id}" onclick="selectQa('${escHtml(qa.id)}')">
             <div class="qa-q">${escHtml(qa.question)}</div>
             <div class="qa-meta">
-                <span class="qa-source">${qa.source || '-'}</span>
-                <span>${qa.tags?.slice(0,3).map(t => '#'+t).join(' ') || ''}</span>
+                <span class="qa-source">${escHtml(qa.source || '-')}</span>
+                <span>${(qa.tags?.slice(0,3).map(t => '#'+escHtml(t)).join(' ')) || ''}</span>
             </div>
         </div>`;
     }).join('');
@@ -1240,23 +1241,18 @@ function updateMenuBadge(menuItemId, delta) {
 // 검토 탭 (소스별 오탐 확인)
 // ─────────────────────────────────────────
 function populateReviewSourceSelect() {
-    // loadSources()가 완료된 후 qaSource 옵션을 복사
     const src = document.getElementById('qaSource');
     const rev = document.getElementById('reviewSource');
-    // qaSource 옵션이 이미 로드됐으면 복사, 없으면 sources API 재활용
-    setTimeout(() => {
-        Array.from(src.options).forEach(opt => {
-            if (opt.value) {
-                const o = document.createElement('option');
-                o.value = opt.value;
-                o.textContent = opt.textContent;
-                rev.appendChild(o);
-            }
-        });
-        // 투표qna 기본 선택
-        const votingOpt = Array.from(rev.options).find(o => o.value === '투표qna');
-        if (votingOpt) { rev.value = '투표qna'; loadReview(); }
-    }, 800);
+    Array.from(src.options).forEach(opt => {
+        if (opt.value) {
+            const o = document.createElement('option');
+            o.value = opt.value;
+            o.textContent = opt.textContent;
+            rev.appendChild(o);
+        }
+    });
+    const votingOpt = Array.from(rev.options).find(o => o.value === '투표qna');
+    if (votingOpt) { rev.value = '투표qna'; loadReview(); }
 }
 
 async function loadReview() {
@@ -1385,10 +1381,9 @@ function renderRelList(side, items) {
         groups[main].forEach(m => {
             const isSel = m.id === selId;
             const selClass = isSel ? ` sel-${side}` : '';
-            const path = escHtml(m.menu_path || m.name);
             const id   = escHtml(m.id);
             html += `<div class="rel-menu-item${selClass}"
-                onclick="selectRelMenu('${side}','${id}','${path}')">
+                onclick="selectRelMenu('${side}','${id}')">
                 <span>📄 ${escHtml(m.name)}</span>
                 ${isSel ? '<span class="rel-check">✓</span>' : ''}
             </div>`;
@@ -1409,7 +1404,9 @@ function filterRelList(side) {
     renderRelList(side, filtered);
 }
 
-function selectRelMenu(side, id, path) {
+function selectRelMenu(side, id) {
+    const item = relMenuItems.find(m => m.id === id);
+    const path = item ? (item.menu_path || item.name) : id;
     if (side === 'src') { relSrcId = id; relSrcPath = path; }
     else               { relTgtId = id; relTgtPath = path; }
 
@@ -1541,11 +1538,18 @@ let descAllItems = [];   // 전체 메뉴 목록 캐시
 let descSelectedId = null;
 
 async function loadDescMenuList() {
-    const noDescOnly = document.getElementById('descNoDescOnly').checked;
-    const res = await fetch(`/admin/menu-desc-list?no_desc_only=${noDescOnly}`);
-    const data = await res.json();
-    descAllItems = data.items || [];
-    renderDescMenuList(descAllItems);
+    try {
+        const noDescOnly = document.getElementById('descNoDescOnly').checked;
+        const res = await fetch(`/admin/menu-desc-list?no_desc_only=${noDescOnly}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        descAllItems = data.items || [];
+        renderDescMenuList(descAllItems);
+    } catch(e) {
+        console.error('메뉴설명 목록 로드 실패:', e);
+        document.getElementById('descMenuList').innerHTML =
+            '<div style="padding:20px;text-align:center;color:#E53935">목록 로드 실패</div>';
+    }
 }
 
 function filterDescList() {
@@ -1572,16 +1576,16 @@ function renderDescMenuList(items) {
 
     let html = '';
     Object.keys(groups).sort().forEach(g => {
-        html += `<div class="desc-group-label">${g}</div>`;
+        html += `<div class="desc-group-label">${escHtml(g)}</div>`;
         groups[g].forEach(m => {
             const hasDesc = m.description && m.description.trim().length > 0;
             const hasEmb  = m.has_embedding;
             const sel     = m.id === descSelectedId ? ' selected' : '';
             const menuName = m.menu_item || m.name || m.sub_menu || '';
-            const subLabel = m.sub_menu ? `<span style="color:#999;font-size:11px"> ${m.sub_menu} &rsaquo;</span> ` : '';
+            const subLabel = m.sub_menu ? `<span style="color:#999;font-size:11px"> ${escHtml(m.sub_menu)} &rsaquo;</span> ` : '';
             html += `
-            <div class="desc-menu-item${sel}" onclick="selectDescMenu('${m.id.replace(/'/g,"\\'")}')">
-                <span class="desc-menu-name" title="${m.menu_path||''}">${subLabel}${menuName}</span>
+            <div class="desc-menu-item${sel}" onclick="selectDescMenu(event, '${m.id.replace(/'/g,"\\'")}')">
+                <span class="desc-menu-name" title="${escHtml(m.menu_path||'')}">${subLabel}${escHtml(menuName)}</span>
                 <span class="desc-badge ${hasDesc ? 'desc-badge-ok' : 'desc-badge-no'}">${hasDesc ? '설명✓' : '설명✗'}</span>
                 ${hasEmb ? '<span class="desc-badge desc-badge-emb">임베딩</span>' : ''}
             </div>`;
@@ -1590,7 +1594,7 @@ function renderDescMenuList(items) {
     el.innerHTML = html;
 }
 
-function selectDescMenu(id) {
+function selectDescMenu(e, id) {
     descSelectedId = id;
     const item = descAllItems.find(m => m.id === id);
     const path = item ? (item.menu_path || '') : '';
@@ -1598,7 +1602,7 @@ function selectDescMenu(id) {
 
     // 선택 하이라이트 갱신
     document.querySelectorAll('.desc-menu-item').forEach(el => el.classList.remove('selected'));
-    event.currentTarget.classList.add('selected');
+    e.currentTarget.classList.add('selected');
 
     document.getElementById('descEditorEmpty').style.display = 'none';
     document.getElementById('descEditorForm').style.display  = 'flex';
