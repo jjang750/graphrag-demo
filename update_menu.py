@@ -11,16 +11,11 @@ XPERP 메뉴 업데이트 스크립트
 """
 
 import csv
-import os
 import sys
-from dotenv import load_dotenv
+
 import neo4j
 
-load_dotenv()
-
-NEO4J_URI = os.getenv("NEO4J_URI", "neo4j://localhost:7687")
-NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "password")
-CSV_PATH = os.path.join(os.path.dirname(__file__), "docs", "xperp_menu_list_all.csv")
+from config import NEO4J_URI, NEO4J_AUTH, MENU_CSV_PATH as CSV_PATH
 
 
 # ─────────────────────────────────────────
@@ -182,7 +177,7 @@ def main():
 
     # Neo4j 연결
     print(f"\n🔌 Neo4j 연결 중...")
-    driver = neo4j.GraphDatabase.driver(NEO4J_URI, auth=("neo4j", NEO4J_PASSWORD))
+    driver = neo4j.GraphDatabase.driver(NEO4J_URI, auth=NEO4J_AUTH)
     try:
         driver.verify_connectivity()
         print("   ✅ 연결 성공")

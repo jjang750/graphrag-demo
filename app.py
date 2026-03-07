@@ -1,46 +1,46 @@
-import io
-import json
-import os
 import re
 import time
 import traceback
-import zipfile
 from contextlib import asynccontextmanager
-from datetime import datetime
-from typing import List, Literal, Optional
-from fastapi import FastAPI, HTTPException, Query
+from typing import List
+
+import neo4j
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-import neo4j
-from dotenv import load_dotenv
 from neo4j_graphrag.llm import OpenAILLM
 from neo4j_graphrag.retrievers import VectorRetriever, VectorCypherRetriever, Text2CypherRetriever, ToolsRetriever
 from neo4j_graphrag.generation import RagTemplate, GraphRAG
+
+from config import (
+    NEO4J_URI, NEO4J_AUTH, GOOGLE_API_KEY, GEMINI_BASE_URL,
+    LLM_MODEL, EMBEDDING_MODEL, INDEX_NAME, QA_INDEX_NAME,
+)
 from gemini_embedder import GeminiEmbedder
+from routers.admin import router as admin_router
 
-load_dotenv()
 
+# ─────────────────────────────────────────
+# 앱 초기화
+# ─────────────────────────────────────────
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """서버 시작/종료 시 실행되는 lifespan 이벤트"""
-    # Startup
     try:
         initialize_retrievers()
         print("✅ Retriever 초기화 완료")
     except Exception as e:
         print(f"⚠️ 경고: Retriever 초기화 실패: {e}")
     yield
-    # Shutdown
     driver.close()
     print("🔌 Neo4j 드라이버 종료")
 
 
 app = FastAPI(title="GraphRAG Demo API", lifespan=lifespan)
 
-# CORS 설정
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -48,42 +48,31 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Neo4j 연결
-URI = os.getenv("NEO4J_URI", "neo4j://localhost:7687")
-AUTH = ("neo4j", os.getenv("NEO4J_PASSWORD", "password"))
-driver = neo4j.GraphDatabase.driver(URI, auth=AUTH)
+# Neo4j
+driver = neo4j.GraphDatabase.driver(NEO4J_URI, auth=NEO4J_AUTH)
 
-# Google AI Studio OpenAI 호환 엔드포인트 설정
-# Gemini API는 OpenAI SDK와 호환되는 엔드포인트를 제공함
-# 참고: https://ai.google.dev/gemini-api/docs/openai
-GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
-
-# LLM 및 Embedder 설정 (Gemini 모델 사용)
+# LLM (Gemini OpenAI 호환 엔드포인트)
 llm = OpenAILLM(
-    model_name="gemini-3-flash-preview",
+    model_name=LLM_MODEL,
     model_params={"temperature": 0},
-    # OpenAI 클라이언트 파라미터: Gemini 호환 엔드포인트로 라우팅
     base_url=GEMINI_BASE_URL,
     api_key=GOOGLE_API_KEY,
 )
-# 임베딩: google-generativeai 네이티브 SDK 사용
-# OpenAI 호환 엔드포인트는 text-embedding-004를 미지원하므로 네이티브 SDK로 처리
-embedder = GeminiEmbedder(
-    model="gemini-embedding-001",
-    api_key=GOOGLE_API_KEY,
-)
 
-# 전역 변수로 retriever 저장
-INDEX_NAME = "menu_vector_index"
-QA_INDEX_NAME = "qa_vector_index"
-vector_retriever = None
-vector_cypher_retriever = None
-qa_retriever = None
-text2cypher_retriever = None
-tools_retriever = None
+# 임베딩 (google-genai 네이티브 SDK)
+embedder = GeminiEmbedder(model=EMBEDDING_MODEL, api_key=GOOGLE_API_KEY)
+
+# app.state에 공유 객체 등록 (라우터에서 request.app.state로 접근)
+app.state.driver = driver
+app.state.embedder = embedder
+
+# Retriever 전역 변수
 graphrag = None
 
+
+# ─────────────────────────────────────────
+# Pydantic 모델 (Query API)
+# ─────────────────────────────────────────
 
 class QueryRequest(BaseModel):
     question: str
@@ -97,19 +86,15 @@ class QueryResponse(BaseModel):
     context: str = ""
 
 
-class QAUpdateRequest(BaseModel):
-    question: str
-    answer: str
-    tags: List[str] = []
-
+# ─────────────────────────────────────────
+# 유틸리티 함수
+# ─────────────────────────────────────────
 
 def extract_nodes_from_content(content: str) -> tuple[List[str], List[str]]:
     """검색 결과에서 Menu/SubMenu/MenuItem 노드와 엣지 추출"""
     nodes = []
     edges = []
 
-    # ── vectorcypher_retriever 포맷 ──────────────────────────────
-    # main_menu='검침' sub_menu='전기검침' menu_item_name='전기검침'
     main_match = re.search(r"main_menu=\'?([^\'\\,\n]+)\'?", content)
     sub_match  = re.search(r"sub_menu=\'?([^\'\\,\n]+)\'?", content)
     item_match = re.search(r"menu_item_name=\'?([^\'\\,\n]+)\'?", content)
@@ -123,8 +108,6 @@ def extract_nodes_from_content(content: str) -> tuple[List[str], List[str]]:
         nodes.append(f"MenuItem_{item_match.group(1).strip()}")
         edges.append("HAS_ITEM")
 
-    # ── qa_retriever 포맷 ────────────────────────────────────────
-    # menu_path='[관련 메뉴] 검침 > 수도검침 > 수도사용량조회 / '
     if not nodes:
         path_match = re.search(
             r'\[관련 메뉴\]\s*([\가-힣A-Za-z0-9()\s]+(?:\s*>\s*[\가-힣A-Za-z0-9()\s]+)*)',
@@ -144,18 +127,44 @@ def extract_nodes_from_content(content: str) -> tuple[List[str], List[str]]:
     return list(set(nodes)), list(set(edges))
 
 
+def get_neo4j_schema() -> str:
+    """Neo4j 스키마 정보 가져오기"""
+    with driver.session() as session:
+        node_info = session.run("""
+            CALL db.schema.nodeTypeProperties()
+            YIELD nodeType, propertyName, propertyTypes
+            RETURN nodeType, collect(propertyName) as properties
+        """).data()
+
+        patterns = session.run("""
+            MATCH (n)-[r]->(m)
+            RETURN DISTINCT labels(n)[0] as source, type(r) as relationship, labels(m)[0] as target
+            LIMIT 20
+        """).data()
+
+        schema_text = "=== Neo4j Schema ===\n\n노드 타입:\n"
+        for node in node_info:
+            schema_text += f"- {node['nodeType']}: {node['properties']}\n"
+
+        schema_text += "\n관계 패턴:\n"
+        for pattern in patterns:
+            schema_text += f"- ({pattern['source']})-[:{pattern['relationship']}]->({pattern['target']})\n"
+
+        return schema_text
+
+
+# ─────────────────────────────────────────
+# Retriever 초기화
+# ─────────────────────────────────────────
+
 def initialize_retrievers():
     """Retrievers 초기화"""
-    global vector_retriever, vector_cypher_retriever, qa_retriever, text2cypher_retriever, tools_retriever, graphrag
+    global graphrag
 
-    # Vector Retriever
     vector_retriever = VectorRetriever(
-        driver=driver,
-        index_name=INDEX_NAME,
-        embedder=embedder
+        driver=driver, index_name=INDEX_NAME, embedder=embedder
     )
 
-    # VectorCypher Retriever
     retrieval_query = """
     WITH node AS menuItem, score
     OPTIONAL MATCH (menuItem)<-[:HAS_ITEM]-(subMenu:SubMenu)
@@ -189,13 +198,10 @@ def initialize_retrievers():
     """
 
     vector_cypher_retriever = VectorCypherRetriever(
-        driver=driver,
-        index_name=INDEX_NAME,
-        retrieval_query=retrieval_query,
-        embedder=embedder
+        driver=driver, index_name=INDEX_NAME,
+        retrieval_query=retrieval_query, embedder=embedder
     )
 
-    # Text2Cypher Retriever
     neo4j_schema = get_neo4j_schema()
     examples = [
         """
@@ -224,13 +230,9 @@ def initialize_retrievers():
     ]
 
     text2cypher_retriever = Text2CypherRetriever(
-        driver=driver,
-        llm=llm,
-        neo4j_schema=neo4j_schema,
-        examples=examples,
+        driver=driver, llm=llm, neo4j_schema=neo4j_schema, examples=examples,
     )
 
-    # QA Retriever
     qa_retrieval_query = """
     WITH node AS qa, score
     OPTIONAL MATCH (qa)-[:IN_MENU]->(m:MenuItem)
@@ -246,10 +248,8 @@ def initialize_retrievers():
              ELSE '' END AS menu_path
     """
     qa_retriever = VectorCypherRetriever(
-        driver=driver,
-        index_name=QA_INDEX_NAME,
-        retrieval_query=qa_retrieval_query,
-        embedder=embedder,
+        driver=driver, index_name=QA_INDEX_NAME,
+        retrieval_query=qa_retrieval_query, embedder=embedder,
     )
 
     vector_tool = vector_retriever.convert_to_tool(
@@ -270,8 +270,7 @@ def initialize_retrievers():
     )
 
     tools_retriever = ToolsRetriever(
-        driver=driver,
-        llm=llm,
+        driver=driver, llm=llm,
         tools=[vector_tool, vector_cypher_tool, text2cypher_tool, qa_tool],
     )
 
@@ -301,38 +300,15 @@ def initialize_retrievers():
     )
 
     graphrag = GraphRAG(
-        llm=llm,
-        retriever=tools_retriever,
-        prompt_template=prompt_template
+        llm=llm, retriever=tools_retriever, prompt_template=prompt_template
     )
 
 
-def get_neo4j_schema() -> str:
-    """Neo4j 스키마 정보 가져오기"""
-    with driver.session() as session:
-        node_info = session.run("""
-            CALL db.schema.nodeTypeProperties()
-            YIELD nodeType, propertyName, propertyTypes
-            RETURN nodeType, collect(propertyName) as properties
-        """).data()
+# ─────────────────────────────────────────
+# 라우터 등록 및 정적 파일
+# ─────────────────────────────────────────
 
-        patterns = session.run("""
-            MATCH (n)-[r]->(m)
-            RETURN DISTINCT labels(n)[0] as source, type(r) as relationship, labels(m)[0] as target
-            LIMIT 20
-        """).data()
-
-        schema_text = "=== Neo4j Schema ===\n\n노드 타입:\n"
-        for node in node_info:
-            schema_text += f"- {node['nodeType']}: {node['properties']}\n"
-
-        schema_text += "\n관계 패턴:\n"
-        for pattern in patterns:
-            schema_text += f"- ({pattern['source']})-[:{pattern['relationship']}]->({pattern['target']})\n"
-
-        return schema_text
-
-
+app.include_router(admin_router)
 app.mount("/libs", StaticFiles(directory="libs"), name="libs")
 
 
@@ -343,484 +319,20 @@ async def root():
 
 
 @app.get("/admin")
-async def admin():
+async def admin_page():
     """관리 화면"""
     return FileResponse("admin.html")
 
 
 # ─────────────────────────────────────────
-# Admin API
+# Graph / Query / Health API
 # ─────────────────────────────────────────
-
-@app.get("/admin/menus")
-def admin_get_menus(q: str = Query("", description="메뉴 검색어")):
-    """메뉴 트리 + 각 MenuItem의 연결 QA 수 반환"""
-    try:
-        with driver.session() as session:
-            result = session.run("""
-                MATCH (m:MenuItem)
-                WHERE $q = '' OR m.name CONTAINS $q OR m.menu_path CONTAINS $q
-                OPTIONAL MATCH (qa:QA)-[:IN_MENU]->(m)
-                WITH m, count(qa) AS qa_count
-                OPTIONAL MATCH (s:SubMenu)-[:HAS_ITEM]->(m)
-                OPTIONAL MATCH (menu:Menu)-[:HAS_SUBMENU]->(s)
-                OPTIONAL MATCH (menu2:Menu)-[:HAS_ITEM]->(m)
-                RETURN
-                    m.id            AS id,
-                    m.name          AS name,
-                    m.menu_path     AS menu_path,
-                    m.main_menu     AS main_menu,
-                    m.sub_menu      AS sub_menu,
-                    qa_count
-                ORDER BY m.main_menu, m.sub_menu, m.name
-            """, q=q)
-            items = [dict(r) for r in result]
-        return {"items": items}
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/admin/qa")
-def admin_get_qa(
-    menuitem_id: Optional[str] = Query(None, description="연결된 QA 조회 (MenuItem.id)"),
-    q: Optional[str] = Query(None, description="QA 검색어"),
-    source: Optional[str] = Query(None, description="소스 파일 필터"),
-    unlinked: bool = Query(False, description="미연결 QA만 조회"),
-    limit: int = Query(50, le=200)
-):
-    """QA 목록 조회 — 필터: menuitem_id | 검색어 | 소스 | 미연결"""
-    try:
-        with driver.session() as session:
-            if menuitem_id:
-                # 특정 MenuItem에 연결된 QA
-                result = session.run("""
-                    MATCH (q:QA)-[:IN_MENU]->(m:MenuItem {id: $mid})
-                    RETURN q.id AS id, q.question AS question,
-                           q.answer AS answer, q.tags AS tags, q.source AS source
-                    ORDER BY q.id
-                    LIMIT $limit
-                """, mid=menuitem_id, limit=limit)
-            elif unlinked:
-                # IN_MENU 연결이 없는 QA
-                where = "WHERE NOT (q)-[:IN_MENU]->()"
-                if source:
-                    where += " AND q.source = $source"
-                if q:
-                    where += " AND (q.question CONTAINS $q OR q.answer CONTAINS $q)"
-                result = session.run(f"""
-                    MATCH (q:QA) {where}
-                    RETURN q.id AS id, q.question AS question,
-                           q.answer AS answer, q.tags AS tags, q.source AS source
-                    ORDER BY q.id
-                    LIMIT $limit
-                """, q=q or "", source=source or "", limit=limit)
-            else:
-                # 검색어 조회
-                where_clauses = []
-                if source:
-                    where_clauses.append("q.source = $source")
-                if q:
-                    where_clauses.append("(q.question CONTAINS $q OR q.answer CONTAINS $q)")
-                where = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
-                result = session.run(f"""
-                    MATCH (q:QA) {where}
-                    RETURN q.id AS id, q.question AS question,
-                           q.answer AS answer, q.tags AS tags, q.source AS source
-                    ORDER BY q.id
-                    LIMIT $limit
-                """, q=q or "", source=source or "", limit=limit)
-
-            rows = []
-            for r in result:
-                rows.append({
-                    "id": r["id"],
-                    "question": r["question"],
-                    "answer": r["answer"],
-                    "tags": r["tags"] or [],
-                    "source": r["source"],
-                })
-        return {"items": rows, "count": len(rows)}
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/admin/qa/{qa_id}/detail")
-def admin_get_qa_detail(qa_id: str):
-    """QA 단건 조회 (ID 직접 지정)"""
-    try:
-        with driver.session() as session:
-            result = session.run("""
-                MATCH (q:QA {id: $qa_id})
-                RETURN q.id AS id, q.question AS question,
-                       q.answer AS answer, q.tags AS tags, q.source AS source
-            """, qa_id=qa_id)
-            row = result.single()
-            if not row:
-                raise HTTPException(status_code=404, detail="QA를 찾을 수 없습니다")
-            return {
-                "id": row["id"],
-                "question": row["question"],
-                "answer": row["answer"],
-                "tags": row["tags"] or [],
-                "source": row["source"],
-            }
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.patch("/admin/qa/{qa_id}")
-def admin_update_qa(qa_id: str, req: QAUpdateRequest):
-    """QA 질문·답변·태그 수정"""
-    try:
-        with driver.session() as session:
-            row = session.run("""
-                MATCH (q:QA {id: $id})
-                SET q.question = $question,
-                    q.answer   = $answer,
-                    q.tags     = $tags
-                RETURN q.id AS id
-            """, id=qa_id, question=req.question,
-                 answer=req.answer, tags=req.tags).single()
-        if not row:
-            raise HTTPException(status_code=404, detail="QA를 찾을 수 없습니다")
-        return {"status": "ok", "id": row["id"]}
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/admin/qa/{qa_id}/menus")
-def admin_get_qa_menus(qa_id: str):
-    """특정 QA에 연결된 MenuItem 목록"""
-    try:
-        with driver.session() as session:
-            result = session.run("""
-                MATCH (q:QA {id: $qa_id})-[:IN_MENU]->(m:MenuItem)
-                RETURN m.id AS id, m.name AS name, m.menu_path AS menu_path
-            """, qa_id=qa_id)
-            items = [dict(r) for r in result]
-        return {"items": items}
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-class LinkRequest(BaseModel):
-    qa_id: str
-    menuitem_id: str
-
-
-class MenuRelationRequest(BaseModel):
-    source_id: str
-    target_id: str
-    rel_type: Literal["관련메뉴", "선행업무", "후속업무"]
-    memo: str = ""
-
-
-@app.post("/admin/qa-link")
-def admin_create_link(req: LinkRequest):
-    """QA ↔ MenuItem 연결 생성"""
-    try:
-        with driver.session() as session:
-            result = session.run("""
-                MATCH (q:QA {id: $qa_id})
-                MATCH (m:MenuItem {id: $mid})
-                MERGE (q)-[r:IN_MENU]->(m)
-                RETURN q.id AS qa_id, m.id AS menu_id, m.menu_path AS menu_path
-            """, qa_id=req.qa_id, mid=req.menuitem_id)
-            row = result.single()
-            if not row:
-                raise HTTPException(status_code=404, detail="QA 또는 MenuItem을 찾을 수 없습니다")
-        return {"status": "ok", "qa_id": row["qa_id"], "menu_path": row["menu_path"]}
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-class DescriptionRequest(BaseModel):
-    menu_id: str
-    description: str
-    generate_embedding: bool = False
-
-
-@app.get("/admin/menu-desc-list")
-def admin_menu_desc_list(no_desc_only: bool = Query(False)):
-    """MenuItem 목록 + description/embedding 보유 여부"""
-    try:
-        with driver.session() as session:
-            result = session.run("""
-                MATCH (m:MenuItem)
-                WHERE $no_desc_only = false
-                   OR m.description IS NULL
-                   OR m.description = ''
-                RETURN
-                    m.id          AS id,
-                    m.name        AS name,
-                    m.menu_path   AS menu_path,
-                    m.main_menu   AS main_menu,
-                    m.sub_menu    AS sub_menu,
-                    m.description AS description,
-                    m.embedding IS NOT NULL AS has_embedding
-                ORDER BY m.main_menu, m.sub_menu, m.name
-            """, no_desc_only=no_desc_only)
-            items = [dict(r) for r in result]
-        return {"items": items}
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.patch("/admin/menu-description")
-def admin_update_menu_description(req: DescriptionRequest):
-    """MenuItem description 저장 (옵션: Gemini 임베딩 생성)"""
-    try:
-        embedding = None
-        if req.generate_embedding:
-            if not req.description.strip():
-                raise HTTPException(status_code=400, detail="임베딩 생성에는 description이 필요합니다")
-            embedding = embedder.embed_query(req.description)
-
-        with driver.session() as session:
-            if embedding is not None:
-                row = session.run("""
-                    MATCH (m:MenuItem {id: $id})
-                    SET m.description = $desc, m.embedding = $embedding
-                    RETURN m.menu_path AS path
-                """, id=req.menu_id, desc=req.description, embedding=embedding).single()
-            else:
-                row = session.run("""
-                    MATCH (m:MenuItem {id: $id})
-                    SET m.description = $desc
-                    RETURN m.menu_path AS path
-                """, id=req.menu_id, desc=req.description).single()
-
-        if not row:
-            raise HTTPException(status_code=404, detail="MenuItem을 찾을 수 없습니다")
-        return {
-            "status": "ok",
-            "path": row["path"],
-            "has_embedding": embedding is not None,
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.delete("/admin/qa-link")
-def admin_delete_link(req: LinkRequest):
-    """QA ↔ MenuItem 연결 해제"""
-    try:
-        with driver.session() as session:
-            session.run("""
-                MATCH (q:QA {id: $qa_id})-[r:IN_MENU]->(m:MenuItem {id: $mid})
-                DELETE r
-            """, qa_id=req.qa_id, mid=req.menuitem_id)
-        return {"status": "ok"}
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/admin/menu-relations")
-def admin_get_menu_relations():
-    """MenuItem 간 RELATED_MENU 관계 목록 조회"""
-    try:
-        with driver.session() as session:
-            result = session.run("""
-                MATCH (a:MenuItem)-[r:RELATED_MENU]->(b:MenuItem)
-                RETURN
-                    a.id AS source_id, a.name AS source_name, a.menu_path AS source_path,
-                    r.type AS rel_type, r.memo AS memo,
-                    b.id AS target_id, b.name AS target_name, b.menu_path AS target_path
-                ORDER BY a.menu_path
-            """)
-            items = [dict(r) for r in result]
-        return {"items": items, "count": len(items)}
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/admin/menu-relation")
-def admin_create_menu_relation(req: MenuRelationRequest):
-    """MenuItem ↔ MenuItem 관계 생성"""
-    if req.source_id == req.target_id:
-        raise HTTPException(status_code=400, detail="소스와 대상 메뉴가 동일합니다")
-    try:
-        with driver.session() as session:
-            result = session.run("""
-                MATCH (a:MenuItem {id: $source_id}), (b:MenuItem {id: $target_id})
-                MERGE (a)-[r:RELATED_MENU {type: $rel_type}]->(b)
-                SET r.memo = $memo, r.created_at = datetime()
-                RETURN a.menu_path AS source_path, b.menu_path AS target_path
-            """, source_id=req.source_id, target_id=req.target_id,
-                rel_type=req.rel_type, memo=req.memo)
-            row = result.single()
-            if not row:
-                raise HTTPException(status_code=404, detail="MenuItem을 찾을 수 없습니다")
-        return {"status": "ok", "source_path": row["source_path"], "target_path": row["target_path"]}
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.delete("/admin/menu-relation")
-def admin_delete_menu_relation(req: MenuRelationRequest):
-    """MenuItem ↔ MenuItem 관계 삭제"""
-    try:
-        with driver.session() as session:
-            session.run("""
-                MATCH (a:MenuItem {id: $source_id})-[r:RELATED_MENU {type: $rel_type}]->(b:MenuItem {id: $target_id})
-                DELETE r
-            """, source_id=req.source_id, target_id=req.target_id, rel_type=req.rel_type)
-        return {"status": "ok"}
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/admin/export/menu-qa")
-def export_menu_qa():
-    """메뉴별 연결된 QA를 JSON 파일로 묶어 ZIP 다운로드"""
-    try:
-        with driver.session() as session:
-            result = session.run("""
-                MATCH (m:MenuItem)
-                OPTIONAL MATCH (q:QA)-[:IN_MENU]->(m)
-                WITH m, collect(q) AS raw_qas
-                WITH m, [qa IN raw_qas WHERE qa IS NOT NULL] AS qas
-                WHERE size(qas) > 0
-                RETURN
-                    m.id        AS menu_id,
-                    m.name      AS menu_name,
-                    m.menu_path AS menu_path,
-                    m.main_menu AS main_menu,
-                    m.sub_menu  AS sub_menu,
-                    [qa IN qas | {
-                        id:       qa.id,
-                        question: qa.question,
-                        answer:   qa.answer,
-                        tags:     qa.tags,
-                        source:   qa.source
-                    }] AS qa_items
-                ORDER BY m.menu_path
-            """)
-            rows = [dict(r) for r in result]
-
-        exported_at = datetime.now().isoformat()
-        zip_buffer = io.BytesIO()
-
-        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-            for row in rows:
-                # 파일명: 메뉴 경로에서 특수문자 제거
-                raw_name = row["menu_path"] or row["menu_name"] or row["menu_id"]
-                safe_name = raw_name.replace(" > ", "_").replace("/", "_").replace("\\", "_")
-                safe_name = re.sub(r'[<>:"|?*\s]', "_", safe_name)
-                filename = f"{safe_name}.json"
-
-                content = {
-                    "menu": {
-                        "id":        row["menu_id"],
-                        "name":      row["menu_name"],
-                        "menu_path": row["menu_path"],
-                        "main_menu": row["main_menu"],
-                        "sub_menu":  row["sub_menu"],
-                    },
-                    "qa_count":   len(row["qa_items"]),
-                    "qa_items":   row["qa_items"],
-                    "exported_at": exported_at,
-                }
-                zf.writestr(filename, json.dumps(content, ensure_ascii=False, indent=2))
-
-        zip_buffer.seek(0)
-        date_str = datetime.now().strftime("%Y%m%d")
-        return StreamingResponse(
-            zip_buffer,
-            media_type="application/zip",
-            headers={"Content-Disposition": f'attachment; filename="menu_qa_export_{date_str}.zip"'},
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/admin/sources")
-def admin_get_sources():
-    """QA source 목록 + 수량"""
-    try:
-        with driver.session() as session:
-            result = session.run("""
-                MATCH (q:QA)
-                RETURN q.source AS source, count(q) AS cnt
-                ORDER BY cnt DESC
-            """)
-            items = [{"source": r["source"], "count": r["cnt"]} for r in result]
-        return {"items": items}
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/admin/review")
-def admin_review(
-    source: str = Query(..., description="검토할 QA 소스"),
-    limit: int = Query(200, le=500),
-):
-    """소스별 연결된 QA + 메뉴 한 번에 조회 (오탐 검토용)"""
-    try:
-        with driver.session() as session:
-            result = session.run("""
-                MATCH (q:QA {source: $source})-[:IN_MENU]->(m:MenuItem)
-                WITH q, collect({
-                    id: m.id,
-                    name: m.name,
-                    path: m.menu_path,
-                    main: m.main_menu
-                }) AS menus
-                RETURN q.id AS id, q.question AS question,
-                       q.source AS source, q.tags AS tags, menus
-                ORDER BY q.id
-                LIMIT $limit
-            """, source=source, limit=limit)
-            items = []
-            for r in result:
-                items.append({
-                    "id": r["id"],
-                    "question": r["question"],
-                    "source": r["source"],
-                    "tags": r["tags"] or [],
-                    "menus": list(r["menus"]),
-                })
-        return {"items": items, "count": len(items)}
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
 
 @app.get("/graph")
 def get_graph():
     """전체 그래프 구조 반환"""
     try:
         with driver.session() as session:
-            # 노드 가져오기 (Menu 계층 + Task)
             nodes_result = session.run("""
                 MATCH (n)
                 WHERE n:Menu OR n:SubMenu OR n:MenuItem OR n:Task
@@ -846,7 +358,6 @@ def get_graph():
                     "properties": dict(record["properties"])
                 })
 
-            # 엣지 가져오기: Menu 계층 엣지 + MenuItem→Task RELATED_TASK 엣지
             edges_result = session.run("""
                 MATCH (n)-[r]->(m)
                 WHERE (
@@ -871,10 +382,7 @@ def get_graph():
                     "relationship": record["relationship"]
                 })
 
-            return {
-                "nodes": nodes,
-                "edges": edges
-            }
+            return {"nodes": nodes, "edges": edges}
     except HTTPException:
         raise
     except Exception as e:
@@ -888,7 +396,6 @@ def query_graphrag(req: QueryRequest):
         if graphrag is None:
             raise HTTPException(status_code=500, detail="GraphRAG not initialized")
 
-        # 429 분당 한도 초과 시 자동 재시도
         last_err = None
         for attempt in range(4):
             try:
@@ -905,7 +412,6 @@ def query_graphrag(req: QueryRequest):
         else:
             raise last_err
 
-        # 사용된 노드와 엣지 추출
         used_nodes = []
         used_edges = []
         retriever_used = "unknown"
@@ -913,29 +419,22 @@ def query_graphrag(req: QueryRequest):
 
         print(f"\n=== 쿼리: {req.question} ===")
 
-        # result 객체 처리
         try:
             if hasattr(result, 'retriever_result') and result.retriever_result:
                 retriever_result = result.retriever_result
 
-                # 선택된 retriever 확인
                 if hasattr(retriever_result, 'metadata') and retriever_result.metadata:
                     tools_selected = retriever_result.metadata.get('tools_selected', [])
                     print(f"📌 선택된 Retriever: {tools_selected}")
 
-                # items 처리
                 if hasattr(retriever_result, 'items') and retriever_result.items:
-                    filtered_count = 0
-
-                    for idx, item in enumerate(retriever_result.items):
-                        # retriever 이름 추출
+                    for item in retriever_result.items:
                         if hasattr(item, 'metadata') and item.metadata:
                             if 'tool' in item.metadata:
                                 retriever_used = item.metadata['tool']
                             elif 'retriever_name' in item.metadata:
                                 retriever_used = item.metadata['retriever_name']
 
-                            # ElementId 기반 노드 매칭 (vector/vectorcypher retriever)
                             if 'id' in item.metadata and 'nodeLabels' in item.metadata:
                                 node_id = item.metadata['id']
                                 node_labels = item.metadata['nodeLabels']
@@ -944,11 +443,7 @@ def query_graphrag(req: QueryRequest):
                                 our_labels = {'MenuItem', 'Menu', 'SubMenu', 'QA'}
                                 if our_labels.intersection(set(node_labels)) and score >= 0.7:
                                     used_nodes.append(f"ElementId_{node_id}")
-                                    filtered_count += 1
-                            else:
-                                filtered_count += 1
 
-                        # content 처리 + 이름 기반 노드 추출 (전체 retriever 공통)
                         if hasattr(item, 'content'):
                             content = str(item.content)
                             context_str += content + "\n\n"
@@ -960,7 +455,6 @@ def query_graphrag(req: QueryRequest):
         except Exception as parse_error:
             print(f"⚠️ 파싱 오류: {parse_error}")
 
-        # 중복 제거
         used_nodes = list(set(used_nodes))
         used_edges = list(set(used_edges))
 

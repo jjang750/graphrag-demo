@@ -9,83 +9,16 @@ XPERP QA 데이터 로딩 스크립트
 """
 
 import argparse
-import os
-import re
 import time
-from pathlib import Path
-from dotenv import load_dotenv
+
 import neo4j
 from gemini_embedder import GeminiEmbedder
 
-load_dotenv()
-
-NEO4J_URI = os.getenv("NEO4J_URI", "neo4j://localhost:7687")
-NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "password")
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
-QA_INDEX_NAME = "qa_vector_index"
-EMBEDDING_DIM = 3072
-MANUALS_DIR = "manuals"
-
-
-def parse_qa_file(filepath):
-    """QA 텍스트 파일 파싱 (두 가지 형식 모두 지원)"""
-    source = Path(filepath).stem
-    entries = []
-
-    with open(filepath, encoding="utf-8") as f:
-        content = f.read()
-
-    # 빈 줄 기준으로 블록 분리
-    blocks = re.split(r'\n\s*\n', content)
-
-    for block in blocks:
-        block = block.strip()
-        if not block or block.startswith('#META'):
-            continue
-
-        q_text = None
-        a_text = None
-        tags = []
-
-        for line in block.splitlines():
-            line = line.strip()
-            if not line:
-                continue
-
-            # Q 라인: Q숫자 : . "텍스트" 또는 Q숫자: 텍스트
-            q_match = re.match(r'^Q\d+[\s:]+\.?\s*"?(.*)', line)
-            # A 라인
-            a_match = re.match(r'^A\d+[\s:]+\.?\s*"?(.*)', line)
-            # T 라인
-            t_match = re.match(r'^T\d+[\s:]+\.?\s*(#.*)', line)
-
-            if q_match:
-                q_text = q_match.group(1).strip().strip('"').strip()
-            elif a_match and q_text:
-                a_text = a_match.group(1).strip().strip('"').strip()
-            elif t_match and q_text:
-                tags_raw = t_match.group(1)
-                tags = re.findall(r'#([\w가-힣/]+)', tags_raw)
-
-        if q_text and a_text:
-            entries.append({
-                'question': q_text,
-                'answer': a_text,
-                'tags': tags,
-                'source': source,
-            })
-
-    return entries
-
-
-def load_all_qa(folder=MANUALS_DIR):
-    """모든 QA 파일 로드"""
-    all_entries = []
-    for filepath in sorted(Path(folder).glob("*.txt")):
-        entries = parse_qa_file(filepath)
-        print(f"  {filepath.name:<25} {len(entries):>4}개")
-        all_entries.extend(entries)
-    return all_entries
+from config import (
+    NEO4J_URI, NEO4J_AUTH, GOOGLE_API_KEY,
+    QA_INDEX_NAME, EMBEDDING_DIM, MANUALS_DIR,
+)
+from utils.qa_parser import load_all_qa
 
 
 def clear_existing_qa(session):
@@ -241,7 +174,7 @@ def main():
     print("✅ 임베더 초기화 완료\n")
 
     print(f"🔌 Neo4j 연결 중: {NEO4J_URI}")
-    driver = neo4j.GraphDatabase.driver(NEO4J_URI, auth=("neo4j", NEO4J_PASSWORD))
+    driver = neo4j.GraphDatabase.driver(NEO4J_URI, auth=NEO4J_AUTH)
     try:
         driver.verify_connectivity()
         print("✅ Neo4j 연결 성공\n")

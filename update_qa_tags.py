@@ -13,7 +13,6 @@ QA .txt 파일 태그 정규화 스크립트
     .venv\\Scripts\\python.exe update_qa_tags.py --skip-neo4j
 """
 
-import os
 import re
 import csv
 import time
@@ -21,19 +20,13 @@ import argparse
 import shutil
 from pathlib import Path
 
-from dotenv import load_dotenv
 from google import genai
 import neo4j
 
-load_dotenv()
-
-NEO4J_URI = os.getenv("NEO4J_URI", "neo4j://localhost:7687")
-NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "password")
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
-
-MANUALS_DIR = "manuals"
-MENU_LIST_CSV = "docs/xperp_menu_list_all.csv"
-LLM_MODEL = "gemini-3-flash-preview"
+from config import (
+    NEO4J_URI, NEO4J_AUTH, GOOGLE_API_KEY,
+    MANUALS_DIR, MENU_CSV_PATH, LLM_MODEL,
+)
 BATCH_SIZE = 5  # LLM 1회 호출당 QA 수
 
 # 소스 파일명 → 대분류 매핑
@@ -110,57 +103,7 @@ def already_has_menu_tag(tags: list[str], candidates: list[str]) -> bool:
     return bool(tag_norm & cand_norm)
 
 
-# ── 파싱 ──────────────────────────────────────────────────────────────────────
-
-def parse_qa_blocks(content: str) -> list[dict]:
-    """
-    파일 내용에서 QA 블록 파싱.
-    각 블록의 원본 raw 텍스트를 보존하여 in-place 치환에 사용.
-    """
-    blocks: list[dict] = []
-    raw_blocks = re.split(r'\n\s*\n', content)
-
-    for raw in raw_blocks:
-        stripped = raw.strip()
-        if not stripped or stripped.startswith('#META'):
-            blocks.append({"type": "skip", "raw": raw})
-            continue
-
-        q_text = a_text = t_line_str = None
-        tags: list[str] = []
-
-        for line in stripped.splitlines():
-            ls = line.strip()
-            if not ls:
-                continue
-            # Q 라인 — ': ' (콜론) 또는 '\t' (탭) 구분자 모두 지원
-            qm = re.match(r'^Q\d+[\s:]+\.?\s*"?(.*?)(?:"?\s*)?$', ls)
-            # A 라인
-            am = re.match(r'^A\d+[\s:]+\.?\s*"?(.*?)(?:"?\s*)?$', ls)
-            # T 라인
-            tm = re.match(r'^(T\d+[\s:]+)(#.*)', ls)
-
-            if qm and q_text is None:
-                q_text = qm.group(1).strip().strip('"')
-            elif am and q_text and a_text is None:
-                a_text = am.group(1).strip().strip('"')
-            elif tm and q_text:
-                t_line_str = ls                      # "T1: #tag1 #tag2" 전체
-                tags = re.findall(r'#([\w가-힣/]+)', tm.group(2))
-
-        if q_text and a_text:
-            blocks.append({
-                "type": "qa",
-                "raw": raw,
-                "question": q_text,
-                "answer": a_text,
-                "tags": tags,
-                "t_line_str": t_line_str,  # None이면 T 라인 없음
-            })
-        else:
-            blocks.append({"type": "skip", "raw": raw})
-
-    return blocks
+from utils.qa_parser import parse_qa_blocks
 
 
 # ── LLM ───────────────────────────────────────────────────────────────────────
@@ -415,8 +358,8 @@ def main() -> None:
     print("=" * 65)
 
     # ── 1. CSV 로드 ─────────────────────────────────────────────────────────────
-    print(f"\n📋 메뉴 목록 로드: {MENU_LIST_CSV}")
-    domain_map = load_menu_by_domain(MENU_LIST_CSV)
+    print(f"\n📋 메뉴 목록 로드: {MENU_CSV_PATH}")
+    domain_map = load_menu_by_domain(MENU_CSV_PATH)
     total_items = sum(len(v) for v in domain_map.values())
     print(f"  대분류 {len(domain_map)}개 / MenuItem {total_items}개 로드 완료\n")
 
@@ -441,7 +384,7 @@ def main() -> None:
         print(f"🔌 Neo4j 연결: {NEO4J_URI}")
         try:
             neo4j_driver = neo4j.GraphDatabase.driver(
-                NEO4J_URI, auth=("neo4j", NEO4J_PASSWORD)
+                NEO4J_URI, auth=NEO4J_AUTH
             )
             neo4j_driver.verify_connectivity()
             print("  ✅ 연결 성공\n")
