@@ -32,7 +32,7 @@ NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "password")
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
 MANUALS_DIR = "manuals"
-MENU_LIST_CSV = "xperp_menu_list.csv"
+MENU_LIST_CSV = "docs/xperp_menu_list_all.csv"
 LLM_MODEL = "gemini-3-flash-preview"
 BATCH_SIZE = 5  # LLM 1회 호출당 QA 수
 
@@ -50,6 +50,12 @@ DOMAIN_MAP: dict[str, list[str] | None] = {
     "아이디qna":  ["시스템"],
     "기타qna":    None,
     "qna":        None,
+    # QA_20260306 신규 소스 (파일명 기반)
+    "부과":       ["부과"],
+    "회계":       ["회계"],
+    "인사급여":   ["인사/급여"],
+    "단지":       ["단지관리"],
+    "민원":       ["단지관리"],
 }
 
 
@@ -127,12 +133,12 @@ def parse_qa_blocks(content: str) -> list[dict]:
             ls = line.strip()
             if not ls:
                 continue
-            # Q 라인
-            qm = re.match(r'^Q\d+\s*:\s*\.?\s*"?(.*?)(?:"?\s*)?$', ls)
+            # Q 라인 — ': ' (콜론) 또는 '\t' (탭) 구분자 모두 지원
+            qm = re.match(r'^Q\d+[\s:]+\.?\s*"?(.*?)(?:"?\s*)?$', ls)
             # A 라인
-            am = re.match(r'^A\d+\s*:\s*\.?\s*"?(.*?)(?:"?\s*)?$', ls)
+            am = re.match(r'^A\d+[\s:]+\.?\s*"?(.*?)(?:"?\s*)?$', ls)
             # T 라인
-            tm = re.match(r'^(T\d+\s*:\s*)(#.*)', ls)
+            tm = re.match(r'^(T\d+[\s:]+)(#.*)', ls)
 
             if qm and q_text is None:
                 q_text = qm.group(1).strip().strip('"')
@@ -396,11 +402,16 @@ def main() -> None:
     parser.add_argument("--source", help="특정 소스만 처리 (예: 검침qna)")
     parser.add_argument("--skip-neo4j", action="store_true", help="Neo4j tags 업데이트 건너뜀")
     parser.add_argument("--list-models", action="store_true", help="사용 가능한 모델 목록만 출력하고 종료")
+    parser.add_argument("--dir", default=MANUALS_DIR,
+                        help=f"QA 파일 디렉터리 (기본값: {MANUALS_DIR})")
     args = parser.parse_args()
+
+    qa_dir = args.dir
 
     print("=" * 65)
     print("  QA 태그 정규화: MenuItem 이름 태그 추가")
     print(f"  dry-run: {args.dry_run}  /  source: {args.source or '전체'}")
+    print(f"  dir    : {qa_dir}")
     print("=" * 65)
 
     # ── 1. CSV 로드 ─────────────────────────────────────────────────────────────
@@ -439,16 +450,16 @@ def main() -> None:
             neo4j_driver = None
 
     # ── 4. 파일 처리 ────────────────────────────────────────────────────────────
-    manuals = Path(MANUALS_DIR)
+    manuals = Path(qa_dir)
     if not manuals.exists():
-        print(f"❌ {MANUALS_DIR}/ 디렉터리 없음")
+        print(f"❌ {qa_dir}/ 디렉터리 없음")
         return
 
     files = sorted(manuals.glob("*.txt"))
     if args.source:
         files = [f for f in files if f.stem == args.source]
         if not files:
-            print(f"❌ {args.source}.txt 파일 없음")
+            print(f"❌ {args.source}.txt 파일 없음 (디렉터리: {qa_dir})")
             return
 
     print(f"📁 처리 파일: {len(files)}개\n")

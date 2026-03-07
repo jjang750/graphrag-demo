@@ -8,6 +8,7 @@ XPERP QA 데이터 로딩 스크립트
     .venv\\Scripts\\python.exe add_qa.py
 """
 
+import argparse
 import os
 import re
 import time
@@ -212,16 +213,23 @@ def verify_qa(session):
 
 
 def main():
+    parser = argparse.ArgumentParser(description="XPERP QA 데이터 로딩")
+    parser.add_argument("--dir", default=MANUALS_DIR,
+                        help=f"QA 파일 디렉터리 (기본값: {MANUALS_DIR})")
+    args = parser.parse_args()
+
+    qa_dir = args.dir
+
     print("=" * 60)
     print("  XPERP QA 데이터 로딩")
     print("=" * 60)
     print(f"  Neo4j URI  : {NEO4J_URI}")
     print(f"  QA Index   : {QA_INDEX_NAME}")
-    print(f"  Manuals Dir: {MANUALS_DIR}/")
+    print(f"  Manuals Dir: {qa_dir}/")
     print("=" * 60)
 
     print("\n📋 QA 파일 파싱 중...")
-    all_entries = load_all_qa()
+    all_entries = load_all_qa(qa_dir)
     print(f"\n→ 총 {len(all_entries)}개 QA 항목 로드 완료\n")
 
     if not all_entries:
