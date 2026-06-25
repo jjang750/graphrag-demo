@@ -11,6 +11,7 @@ import re
 import zipfile
 from datetime import datetime
 from typing import List, Literal, Optional
+from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
@@ -459,6 +460,69 @@ def export_menu_qa(request: Request):
             zip_buffer,
             media_type="application/zip",
             headers={"Content-Disposition": f'attachment; filename="menu_qa_export_{date_str}.zip"'},
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/export/menu-md")
+def export_menu_md(request: Request, main_menu: str = Query(..., description="내보낼 대분류명")):
+    """특정 대분류의 메뉴 설명 + 관련 메뉴를 단일 Markdown 파일로 내보내기 (외부 RAG 문서용)"""
+    arrow = {"선행업무": "→ 선행업무", "후속업무": "← 후속업무", "관련메뉴": "↔ 관련메뉴"}
+    try:
+        with _driver(request).session() as session:
+            result = session.run("""
+                MATCH (m:MenuItem)
+                WHERE m.main_menu = $main
+                OPTIONAL MATCH (m)-[r:RELATED_MENU]->(t:MenuItem)
+                WITH m, collect(CASE WHEN t IS NULL THEN NULL
+                     ELSE {type: r.type, path: coalesce(t.menu_path, t.name)} END) AS outs
+                OPTIONAL MATCH (m)<-[r2:RELATED_MENU {type:'관련메뉴'}]-(s:MenuItem)
+                WITH m, outs, collect(CASE WHEN s IS NULL THEN NULL
+                     ELSE {type: '관련메뉴', path: coalesce(s.menu_path, s.name)} END) AS ins
+                RETURN
+                    coalesce(m.menu_path, m.name) AS menu_path,
+                    m.description AS description,
+                    [x IN outs WHERE x IS NOT NULL] AS out_rels,
+                    [x IN ins  WHERE x IS NOT NULL] AS in_rels
+                ORDER BY m.menu_path
+            """, main=main_menu)
+            rows = [dict(r) for r in result]
+
+        now = datetime.now().strftime("%Y-%m-%d %H:%M")
+        lines = [f"# {main_menu} 메뉴 관계 문서", f"> 생성일: {now} · 대분류: {main_menu}", ""]
+        section_count = 0
+        for row in rows:
+            desc = (row.get("description") or "").strip()
+            rel_lines, seen = [], set()
+            for rel in (row.get("out_rels") or []) + (row.get("in_rels") or []):
+                label = arrow.get(rel["type"], "↔ 관련메뉴")
+                text = f"- {label}: {rel['path']}"
+                if text not in seen:
+                    seen.add(text)
+                    rel_lines.append(text)
+            if not desc and not rel_lines:
+                continue
+            section_count += 1
+            lines.append(f"## {row['menu_path']}")
+            if desc:
+                lines += ["**설명**", desc, ""]
+            if rel_lines:
+                lines += ["**관련 메뉴**", *rel_lines, ""]
+        if section_count == 0:
+            lines.append(f"_'{main_menu}' 대분류에 설명·관계가 있는 메뉴가 없습니다._")
+
+        md = "\n".join(lines) + "\n"
+        buf = io.BytesIO(md.encode("utf-8"))
+        date_str = datetime.now().strftime("%Y%m%d")
+        fname_ascii = f"menu_relations_{date_str}.md"
+        fname_utf8 = quote(f"메뉴관계_{main_menu}_{date_str}.md")
+        return StreamingResponse(
+            buf, media_type="text/markdown; charset=utf-8",
+            headers={"Content-Disposition":
+                     f'attachment; filename="{fname_ascii}"; filename*=UTF-8\'\'{fname_utf8}'},
         )
     except HTTPException:
         raise
